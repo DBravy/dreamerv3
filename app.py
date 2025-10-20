@@ -14,7 +14,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 
 app = Flask(__name__)
 
@@ -31,6 +31,7 @@ metrics_data = {
     'timestamps': deque(maxlen=1000),
 }
 console_logs = deque(maxlen=500)  # Store last 500 lines of console output
+grid_visualizations = deque(maxlen=50)  # Store last 50 grid visualizations
 current_logdir = None
 training_start_time = None
 
@@ -48,6 +49,108 @@ def calculate_moving_average(data, window=10):
         window_data = list(data)[start_idx:i+1]
         result.append(sum(window_data) / len(window_data))
     return result
+
+
+def save_grid_visualization(grid_data, step, accuracy):
+    """Save a grid visualization as an image."""
+    try:
+        import numpy as np
+        from PIL import Image
+        
+        # ARC color palette (same as in arc.py)
+        COLOR_MAP = {
+            0: [0, 0, 0],           # Black
+            1: [0, 116, 217],       # Blue
+            2: [255, 65, 54],       # Red
+            3: [46, 204, 64],       # Green
+            4: [255, 220, 0],       # Yellow
+            5: [170, 170, 170],     # Gray
+            6: [240, 18, 190],      # Magenta
+            7: [255, 133, 27],      # Orange
+            8: [127, 219, 255],     # Light Blue
+            9: [135, 12, 37],       # Maroon
+        }
+        
+        test_input = grid_data['test_input']
+        agent_output = grid_data['agent_output']
+        
+        # Scale factor for visualization
+        cell_size = 20
+        
+        # Create images for input and output
+        def grid_to_image(grid):
+            h, w = grid.shape
+            img = np.zeros((h * cell_size, w * cell_size, 3), dtype=np.uint8)
+            
+            for i in range(h):
+                for j in range(w):
+                    color = COLOR_MAP.get(int(grid[i, j]), [0, 0, 0])
+                    img[i*cell_size:(i+1)*cell_size, j*cell_size:(j+1)*cell_size] = color
+            
+            return img
+        
+        input_img = grid_to_image(test_input)
+        output_img = grid_to_image(agent_output)
+        
+        # Add grid lines
+        def add_grid_lines(img, grid_shape):
+            h, w = grid_shape
+            img_h, img_w = img.shape[:2]
+            
+            # Horizontal lines
+            for i in range(1, h):
+                img[i*cell_size-1:i*cell_size+1, :] = [80, 80, 80]
+            
+            # Vertical lines
+            for j in range(1, w):
+                img[:, j*cell_size-1:j*cell_size+1] = [80, 80, 80]
+            
+            return img
+        
+        input_img = add_grid_lines(input_img, test_input.shape)
+        output_img = add_grid_lines(output_img, agent_output.shape)
+        
+        # Combine side by side with padding
+        padding = 40
+        max_height = max(input_img.shape[0], output_img.shape[0])
+        combined_width = input_img.shape[1] + output_img.shape[1] + padding
+        
+        combined = np.ones((max_height + 60, combined_width, 3), dtype=np.uint8) * 240
+        
+        # Paste input
+        y_offset_input = (max_height - input_img.shape[0]) // 2 + 30
+        combined[y_offset_input:y_offset_input+input_img.shape[0], :input_img.shape[1]] = input_img
+        
+        # Paste output
+        y_offset_output = (max_height - output_img.shape[0]) // 2 + 30
+        x_offset_output = input_img.shape[1] + padding
+        combined[y_offset_output:y_offset_output+output_img.shape[0], x_offset_output:x_offset_output+output_img.shape[1]] = output_img
+        
+        # Convert to PIL Image
+        img = Image.fromarray(combined)
+        
+        # Save to static directory
+        static_dir = Path('static/grids')
+        static_dir.mkdir(exist_ok=True, parents=True)
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        filename = f'grid_step_{step}_{timestamp}.png'
+        filepath = static_dir / filename
+        
+        img.save(filepath)
+        
+        return {
+            'step': step,
+            'accuracy': accuracy,
+            'filename': filename,
+            'timestamp': datetime.now().isoformat(),
+            'input_shape': test_input.shape,
+            'output_shape': agent_output.shape
+        }
+        
+    except Exception as e:
+        print(f"Error saving grid visualization: {e}")
+        return None
 
 
 def monitor_console_output():
@@ -74,7 +177,7 @@ def monitor_console_output():
 
 def monitor_training():
     """Monitor training logs and extract metrics."""
-    global is_training, current_logdir, metrics_data
+    global is_training, current_logdir, metrics_data, grid_visualizations
     
     # Wait for logdir to be created
     max_wait = 30  # seconds
@@ -91,6 +194,7 @@ def monitor_training():
     
     metrics_file = Path(current_logdir) / 'metrics.jsonl'
     scores_file = Path(current_logdir) / 'scores.jsonl'
+    grids_dir = Path(current_logdir) / 'grids'
     
     # Wait for metrics file to be created
     waited = 0
@@ -105,6 +209,7 @@ def monitor_training():
     # Monitor the files
     last_position = 0
     last_scores_position = 0
+    processed_grids = set()
     
     while is_training:
         try:
@@ -144,6 +249,35 @@ def monitor_training():
                             except json.JSONDecodeError:
                                 continue
             
+            # Check for new grid visualizations
+            if grids_dir.exists():
+                for grid_file in grids_dir.glob('grid_*.json'):
+                    if grid_file.name not in processed_grids:
+                        try:
+                            with open(grid_file, 'r') as f:
+                                grid_data = json.load(f)
+                            
+                            # Convert lists back to numpy arrays
+                            import numpy as np
+                            grid_data['test_input'] = np.array(grid_data['test_input'], dtype=np.uint8)
+                            grid_data['agent_output'] = np.array(grid_data['agent_output'], dtype=np.uint8)
+                            
+                            # Save visualization
+                            viz_info = save_grid_visualization(
+                                grid_data,
+                                grid_data.get('step', 0),
+                                grid_data.get('accuracy', 0)
+                            )
+                            
+                            if viz_info:
+                                grid_visualizations.append(viz_info)
+                                print(f"Saved grid visualization for step {viz_info['step']}")
+                            
+                            processed_grids.add(grid_file.name)
+                            
+                        except Exception as e:
+                            print(f"Error processing grid file {grid_file}: {e}")
+            
             # Read scores if available
             if scores_file.exists():
                 with open(scores_file, 'r') as f:
@@ -168,9 +302,10 @@ def start_training_process(config='arc', custom_args=''):
     # Clear previous console logs
     console_logs.clear()
     
-    # Create timestamp for logdir
+    # Create timestamp for logdir (matches format used in main.py)
     timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-    current_logdir = str(Path.home() / 'logdir' / timestamp)
+    logdir_base = Path(__file__).parent.parent / 'logdir'
+    current_logdir = str(logdir_base / f'arc-{timestamp}')
     
     # Build command
     cmd = [
@@ -339,7 +474,7 @@ def api_logs():
 @app.route('/api/clear', methods=['POST'])
 def api_clear():
     """API endpoint to clear metrics data."""
-    global metrics_data, console_logs
+    global metrics_data, console_logs, grid_visualizations
     
     metrics_data = {
         'steps': deque(maxlen=1000),
@@ -349,8 +484,40 @@ def api_clear():
         'timestamps': deque(maxlen=1000),
     }
     console_logs.clear()
+    grid_visualizations.clear()
     
     return jsonify({'status': 'success', 'message': 'Metrics and logs cleared'})
+
+
+@app.route('/api/grids', methods=['GET'])
+def api_grids():
+    """API endpoint to get grid visualizations."""
+    # Get optional parameters
+    limit = request.args.get('limit', 10, type=int)
+    
+    grids = list(grid_visualizations)
+    
+    # Return only last N grids if specified
+    if limit > 0:
+        grids = grids[-limit:]
+    
+    return jsonify({
+        'grids': grids,
+        'total_grids': len(grid_visualizations)
+    })
+
+
+@app.route('/static/grids/<filename>')
+def serve_grid_image(filename):
+    """Serve grid visualization images."""
+    try:
+        filepath = Path('static/grids') / filename
+        if filepath.exists():
+            return send_file(filepath, mimetype='image/png')
+        else:
+            return jsonify({'error': 'File not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':

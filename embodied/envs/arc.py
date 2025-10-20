@@ -23,7 +23,7 @@ class ARC(embodied.Env):
         9: [135, 12, 37],       # Maroon
     }
     
-    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=100, size=64):
+    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=100, size=64, save_grids=True, save_frequency=10):
         """
         Args:
             task: Not used, but required by interface
@@ -32,12 +32,16 @@ class ARC(embodied.Env):
             split: 'training' or 'evaluation' (default: 'training')
             length: Maximum steps per episode
             size: Size to pad grids to (default 64×64)
+            save_grids: Whether to save grid visualizations (default: True)
+            save_frequency: Save grids every N episodes (default: 10)
         """
         self.puzzle_dir = puzzle_dir
         self.version = version
         self.split = split
         self.length = length
         self.size = size
+        self.save_grids = save_grids
+        self.save_frequency = save_frequency
         
         # Construct the full path to puzzles
         self.full_puzzle_path = f"{puzzle_dir}/{version}/data/{split}"
@@ -57,6 +61,21 @@ class ARC(embodied.Env):
         self.current_output = None
         self.step_count = 0
         self.num_valid_pairs = 0
+        self.episode_count = 0
+        self.global_step = 0
+        
+        # Grid saving setup
+        if self.save_grids:
+            import os
+            self.logdir = os.environ.get('LOGDIR', None)
+            if self.logdir:
+                from pathlib import Path
+                self.grids_dir = Path(self.logdir) / 'grids'
+                self.grids_dir.mkdir(exist_ok=True, parents=True)
+                print(f"Saving grids to: {self.grids_dir}")
+            else:
+                self.save_grids = False
+                print("Warning: LOGDIR not set, grid saving disabled")
     
     def _load_puzzles(self):
         """Load ARC JSON files from the specified version and split directory."""
@@ -116,6 +135,7 @@ class ARC(embodied.Env):
         # Execute action on the grid
         self._execute_action(action)
         self.step_count += 1
+        self.global_step += 1
         
         # Calculate reward
         reward = self._calculate_reward()
@@ -126,12 +146,20 @@ class ARC(embodied.Env):
             self.step_count >= self.length
         )
         
+        # Save grid visualization at episode end
+        if is_done and self.save_grids and (self.episode_count % self.save_frequency == 0):
+            self._save_grid_data(reward)
+        
         # Generate observation
         obs = self._get_observation()
         obs['reward'] = np.float32(reward)
         obs['is_first'] = False
         obs['is_last'] = is_done
         obs['is_terminal'] = is_done
+        
+        # Increment episode count when done
+        if is_done:
+            self.episode_count += 1
         
         return obs
     
@@ -311,3 +339,30 @@ class ARC(embodied.Env):
             rgb[mask] = rgb_val
         
         return rgb
+    
+    def _save_grid_data(self, accuracy):
+        """Save grid data for visualization."""
+        try:
+            import json
+            from datetime import datetime
+            
+            # Create grid data dict
+            grid_data = {
+                'step': self.global_step,
+                'episode': self.episode_count,
+                'accuracy': float(accuracy),
+                'test_input': self.test_input.tolist(),
+                'agent_output': self.current_output.tolist(),
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            # Save to JSON file
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+            filename = f'grid_step_{self.global_step}_ep_{self.episode_count}_{timestamp}.json'
+            filepath = self.grids_dir / filename
+            
+            with open(filepath, 'w') as f:
+                json.dump(grid_data, f)
+            
+        except Exception as e:
+            print(f"Error saving grid data: {e}")

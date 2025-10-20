@@ -225,6 +225,152 @@ h1 {
     margin-left: 5px;
 }
 
+.grids-container {
+    margin-bottom: 20px;
+}
+
+.grids-card {
+    background: white;
+    border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+}
+
+.grids-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 25px;
+    border-bottom: 2px solid #e5e7eb;
+}
+
+.grids-header h3 {
+    color: #333;
+    font-size: 1.2em;
+    margin: 0;
+}
+
+.grids-controls {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+}
+
+.grids-controls label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #6b7280;
+    font-size: 0.9em;
+    user-select: none;
+}
+
+.grids-controls input[type="number"] {
+    width: 60px;
+    padding: 6px;
+    border: 2px solid #e5e7eb;
+    border-radius: 4px;
+    font-size: 0.95em;
+}
+
+.grids-controls input[type="number"]:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.grids-gallery {
+    padding: 20px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+    gap: 20px;
+}
+
+.grids-empty {
+    color: #6b7280;
+    font-style: italic;
+    text-align: center;
+    padding: 50px 20px;
+    grid-column: 1 / -1;
+}
+
+.grid-item {
+    background: #f9fafb;
+    border: 2px solid #e5e7eb;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.grid-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.grid-image-container {
+    position: relative;
+    background: white;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.grid-image-container img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+
+.grid-labels {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    margin-top: 8px;
+    padding: 0 10px;
+    font-size: 0.75em;
+    color: #6b7280;
+    font-weight: 600;
+}
+
+.grid-label-left {
+    text-align: left;
+}
+
+.grid-label-right {
+    text-align: right;
+}
+
+.grid-info {
+    padding: 12px 15px;
+    background: white;
+    display: flex;
+    justify-content: space-around;
+    gap: 15px;
+}
+
+.grid-info-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.grid-info-label {
+    color: #9ca3af;
+    font-size: 0.8em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.grid-info-value {
+    color: #333;
+    font-size: 1em;
+    font-weight: 700;
+}
+
 .console-container {
     margin-bottom: 20px;
 }

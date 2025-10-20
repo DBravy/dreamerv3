@@ -225,6 +225,52 @@ async function updateConsoleLogs() {
     }
 }
 
+// Fetch and update grid visualizations
+async function updateGridVisualizations() {
+    try {
+        const limit = document.getElementById('grid-limit').value;
+        const response = await fetch(`/api/grids?limit=${limit}`);
+        const data = await response.json();
+
+        const gridsGallery = document.getElementById('grids-gallery');
+        
+        if (data.grids && data.grids.length > 0) {
+            // Clear empty message if present
+            if (gridsGallery.querySelector('.grids-empty')) {
+                gridsGallery.innerHTML = '';
+            }
+
+            // Rebuild the gallery
+            gridsGallery.innerHTML = data.grids.map(grid => `
+                <div class="grid-item">
+                    <div class="grid-image-container">
+                        <img src="/static/grids/${grid.filename}" alt="Grid at step ${grid.step}" />
+                        <div class="grid-labels">
+                            <span class="grid-label-left">Test Input (${grid.input_shape[0]}×${grid.input_shape[1]})</span>
+                            <span class="grid-label-right">Agent Output (${grid.output_shape[0]}×${grid.output_shape[1]})</span>
+                        </div>
+                    </div>
+                    <div class="grid-info">
+                        <div class="grid-info-item">
+                            <span class="grid-info-label">Step:</span>
+                            <span class="grid-info-value">${grid.step}</span>
+                        </div>
+                        <div class="grid-info-item">
+                            <span class="grid-info-label">Accuracy:</span>
+                            <span class="grid-info-value">${(grid.accuracy * 100).toFixed(1)}%</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        } else if (!gridsGallery.querySelector('.grids-empty')) {
+            gridsGallery.innerHTML = '<div class="grids-empty">No grids yet. Start training to see reconstructions...</div>';
+        }
+
+    } catch (error) {
+        console.error('Error fetching grid visualizations:', error);
+    }
+}
+
 // Helper function to escape HTML
 function escapeHtml(text) {
     const div = document.createElement('div');
@@ -361,16 +407,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Update window size when changed
     document.getElementById('window-size').addEventListener('change', updateMetrics);
+    
+    // Update grid limit when changed
+    document.getElementById('grid-limit').addEventListener('change', updateGridVisualizations);
 
     // Initial status update
     updateStatus();
     updateMetrics();
     updateConsoleLogs();
+    updateGridVisualizations();
 
     // Set up periodic updates
     updateInterval = setInterval(() => {
         updateStatus();
         updateConsoleLogs();  // Always update logs when training
+        updateGridVisualizations();  // Always update grids
         if (isTraining) {
             updateMetrics();
         }
