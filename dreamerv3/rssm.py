@@ -1,4 +1,5 @@
 import math
+import re
 
 import einops
 import elements
@@ -112,9 +113,6 @@ class RSSM(nj.Module):
         carry, (feat, action) = nj.scan(
             lambda c, a: self.imagine(c, a, 1, training, single=True),
             nn.cast(carry), nn.cast(policy), length, unroll=unroll, axis=1)
-      # We can also return all carry entries but it might be expensive.
-      # entries = dict(deter=feat['deter'], stoch=feat['stoch'])
-      # return carry, entries, feat, action
       return carry, feat, action
 
   def loss(self, carry, tokens, acts, reset, training):
@@ -196,6 +194,39 @@ class Encoder(nj.Module):
     self.imgkeys = [k for k, s in obs_space.items() if len(s.shape) == 3]
     self.depths = tuple(self.depth * mult for mult in self.mults)
     self.kw = kw
+    
+    # Detect grouped images with masking (e.g., pair_1, pair_2, ... with num_valid_pairs)
+    self.img_groups = self._detect_image_groups(obs_space)
+
+  def _detect_image_groups(self, obs_space):
+    """
+    Detect if images follow a pattern like pair_1, pair_2, ... pair_N
+    with a corresponding num_valid_{prefix} mask.
+    
+    Returns dict mapping group prefix to (list of keys, mask key) or None.
+    """
+    pattern = re.compile(r'(.+)_(\d+)$')
+    groups = {}
+    
+    for key in self.imgkeys:
+      match = pattern.match(key)
+      if match:
+        prefix, idx = match.groups()
+        if prefix not in groups:
+          groups[prefix] = []
+        groups[prefix].append(key)
+    
+    if not groups:
+      return None
+    
+    # Check for mask keys
+    result = {}
+    for prefix, keys in groups.items():
+      mask_key = f'num_valid_{prefix}s'  # e.g., num_valid_pairs
+      if mask_key in obs_space:
+        result[prefix] = (sorted(keys), mask_key)
+    
+    return result if result else None
 
   @property
   def entry_space(self):
@@ -225,7 +256,15 @@ class Encoder(nj.Module):
 
     if self.imgkeys:
       K = self.kernel
-      imgs = [obs[k] for k in sorted(self.imgkeys)]
+      
+      # Check if we have grouped images with masking
+      if self.img_groups:
+        # Process with masking
+        imgs = self._process_masked_images(obs, bdims)
+      else:
+        # Standard processing (backward compatible)
+        imgs = [obs[k] for k in sorted(self.imgkeys)]
+      
       assert all(x.dtype == jnp.uint8 for x in imgs)
       x = nn.cast(jnp.concatenate(imgs, -1), force=True) / 255 - 0.5
       x = x.reshape((-1, *x.shape[bdims:]))
@@ -248,6 +287,47 @@ class Encoder(nj.Module):
     tokens = x.reshape((*bshape, *x.shape[1:]))
     entries = {}
     return carry, entries, tokens
+
+  def _process_masked_images(self, obs, bdims):
+    """
+    Process images with masking support.
+    Zero out images that should be masked based on num_valid_{prefix}s.
+    """
+    masked_obs = {}
+    ungrouped_keys = set(self.imgkeys)
+    
+    # Process each group with its mask
+    for prefix, (keys, mask_key) in self.img_groups.items():
+      num_valid = obs[mask_key]  # shape: (B,) or (B, T)
+      
+      for i, key in enumerate(keys):
+        img = obs[key]
+        
+        # Create mask: True where this image should be kept
+        # num_valid is 0-indexed count, so pair_1 is kept if num_valid >= 1
+        idx = i + 1  # pair_1 is index 1, etc.
+        
+        if bdims == 1:
+          # Single timestep: num_valid shape is (B,)
+          keep_mask = num_valid >= idx  # shape: (B,)
+          # Broadcast to image shape: (B, H, W, C)
+          keep_mask = keep_mask[:, None, None, None]
+        else:
+          # Multiple timesteps: num_valid shape is (B, T)
+          keep_mask = num_valid >= idx  # shape: (B, T)
+          # Broadcast to image shape: (B, T, H, W, C)
+          keep_mask = keep_mask[:, :, None, None, None]
+        
+        # Zero out masked images
+        masked_obs[key] = jnp.where(keep_mask, img, jnp.zeros_like(img))
+        ungrouped_keys.discard(key)
+    
+    # Add ungrouped images (no masking applied)
+    for key in ungrouped_keys:
+      masked_obs[key] = obs[key]
+    
+    # Return in sorted order
+    return [masked_obs[k] for k in sorted(self.imgkeys)]
 
 
 class Decoder(nj.Module):

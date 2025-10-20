@@ -56,6 +56,7 @@ class ARC(embodied.Env):
         self.test_output = None
         self.current_output = None
         self.step_count = 0
+        self.num_valid_pairs = 0
     
     def _load_puzzles(self):
         """Load ARC JSON files from the specified version and split directory."""
@@ -84,7 +85,9 @@ class ARC(embodied.Env):
             'pair_2': elements.Space(np.uint8, pair_shape),
             'pair_3': elements.Space(np.uint8, pair_shape),
             'pair_4': elements.Space(np.uint8, pair_shape),
+            'pair_5': elements.Space(np.uint8, pair_shape),
             'test_pair': elements.Space(np.uint8, pair_shape),
+            'num_valid_pairs': elements.Space(np.int32, (), 0, 5),  # How many of pair_1-5 are real (0-5)
             'reward': elements.Space(np.float32),
             'is_first': elements.Space(bool),
             'is_last': elements.Space(bool),
@@ -140,15 +143,19 @@ class ARC(embodied.Env):
         self.train_inputs = [np.array(ex['input'], dtype=np.uint8) for ex in train]
         self.train_outputs = [np.array(ex['output'], dtype=np.uint8) for ex in train]
         
-        # Pad to always have 4 examples (repeat last if fewer)
-        while len(self.train_inputs) < 4:
-            idx = len(self.train_inputs) - 1
-            self.train_inputs.append(self.train_inputs[idx].copy())
-            self.train_outputs.append(self.train_outputs[idx].copy())
+        # Store the actual number of examples (before padding)
+        self.num_valid_pairs = min(len(self.train_inputs), 5)
         
-        # Take only first 4 if more
-        self.train_inputs = self.train_inputs[:4]
-        self.train_outputs = self.train_outputs[:4]
+        # Zero-pad to always have 5 examples
+        while len(self.train_inputs) < 5:
+            # Create blank grids (use first example's shape as reference)
+            blank = np.zeros_like(self.train_inputs[0])
+            self.train_inputs.append(blank)
+            self.train_outputs.append(blank)
+        
+        # Take only first 5 if more
+        self.train_inputs = self.train_inputs[:5]
+        self.train_outputs = self.train_outputs[:5]
         
         # Get test case (use first test example)
         test = self.current_puzzle['test'][0]
@@ -201,13 +208,16 @@ class ARC(embodied.Env):
         obs = {}
         
         # Create training pairs
-        for i in range(4):
+        for i in range(5):
             pair = self._make_pair(self.train_inputs[i], self.train_outputs[i])
             obs[f'pair_{i+1}'] = pair
         
         # Create test pair (input | current work)
         test_pair = self._make_pair(self.test_input, self.current_output)
         obs['test_pair'] = test_pair
+        
+        # Add mask information
+        obs['num_valid_pairs'] = np.int32(self.num_valid_pairs)
         
         return obs
     
