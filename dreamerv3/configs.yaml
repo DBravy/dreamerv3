@@ -7,7 +7,7 @@ defaults:
   task: dummy_disc
   seed: 0
   script: train
-  batch_size: 16
+  batch_size: 1
   batch_length: 64
   report_length: 32
   consec_train: 1
@@ -181,6 +181,7 @@ arc:
   env:
     arc: {puzzle_dir: './arc-data/', version: 'V2', split: 'training', length: 100, size: 64}
   run: {steps: 1.1e6, envs: 1, train_ratio: 256}
+  replay: {size: 1e4}  # Reduced from 5e6 to prevent OOM with large ARC observations
   agent:
     enc.simple: {mults: [2, 3, 4, 4]}  # Keep 4 layers since we're padding to 64
 
@@ -189,6 +190,7 @@ arc_v1_train:
   env:
     arc: {puzzle_dir: './arc-data/', version: 'V1', split: 'training', length: 100, size: 64}
   run: {steps: 1.1e6, envs: 1, train_ratio: 256}
+  replay: {size: 1e4}  # Reduced from 5e6 to prevent OOM with large ARC observations
   agent:
     enc.simple: {mults: [2, 3, 4, 4]}
 
@@ -197,6 +199,7 @@ arc_v1_eval:
   env:
     arc: {puzzle_dir: './arc-data/', version: 'V1', split: 'evaluation', length: 100, size: 64}
   run: {steps: 1.1e6, envs: 1, train_ratio: 256}
+  replay: {size: 1e4}  # Reduced from 5e6 to prevent OOM with large ARC observations
   agent:
     enc.simple: {mults: [2, 3, 4, 4]}
 
@@ -205,6 +208,7 @@ arc_v2_train:
   env:
     arc: {puzzle_dir: './arc-data/', version: 'V2', split: 'training', length: 100, size: 64}
   run: {steps: 1.1e6, envs: 1, train_ratio: 256}
+  replay: {size: 1e4}  # Reduced from 5e6 to prevent OOM with large ARC observations
   agent:
     enc.simple: {mults: [2, 3, 4, 4]}
 
@@ -213,6 +217,7 @@ arc_v2_eval:
   env:
     arc: {puzzle_dir: './arc-data/', version: 'V2', split: 'evaluation', length: 100, size: 64}
   run: {steps: 1.1e6, envs: 1, train_ratio: 256}
+  replay: {size: 1e4}  # Reduced from 5e6 to prevent OOM with large ARC observations
   agent:
     enc.simple: {mults: [2, 3, 4, 4]}
 
