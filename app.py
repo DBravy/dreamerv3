@@ -34,6 +34,11 @@ console_logs = deque(maxlen=500)  # Store last 500 lines of console output
 current_logdir = None
 training_start_time = None
 
+# Configuration for metrics update frequency (in seconds)
+# Lower values = more frequent updates = more responsive web UI
+# Higher values = less frequent updates = lower overhead
+metrics_update_interval = 0.5  # Default: check for new metrics every 0.5 seconds
+
 
 def calculate_moving_average(data, window=10):
     """Calculate moving average for a sequence of values."""
@@ -74,7 +79,7 @@ def monitor_console_output():
 
 def monitor_training():
     """Monitor training logs and extract metrics."""
-    global is_training, current_logdir, metrics_data
+    global is_training, current_logdir, metrics_data, metrics_update_interval
     
     # Wait for logdir to be created
     max_wait = 30  # seconds
@@ -101,6 +106,7 @@ def monitor_training():
         waited += 0.5
     
     print(f"Monitoring metrics from: {metrics_file}")
+    print(f"Using update interval: {metrics_update_interval}s")
     
     # Monitor the files
     last_position = 0
@@ -150,11 +156,12 @@ def monitor_training():
                     new_lines = f.readlines()
                     last_scores_position = f.tell()
             
-            time.sleep(1)  # Check every second
+            # Use configurable update interval
+            time.sleep(metrics_update_interval)
             
         except Exception as e:
             print(f"Error monitoring metrics: {e}")
-            time.sleep(1)
+            time.sleep(metrics_update_interval)
 
 
 def start_training_process(config='arc', custom_args=''):
@@ -270,6 +277,7 @@ def api_status():
         'logdir': current_logdir,
         'num_datapoints': len(metrics_data['steps']),
         'num_log_lines': len(console_logs),
+        'metrics_update_interval': metrics_update_interval,
     }
     
     if training_start_time:
@@ -350,6 +358,55 @@ def api_clear():
     console_logs.clear()
     
     return jsonify({'status': 'success', 'message': 'Metrics and logs cleared'})
+
+
+@app.route('/api/config/update_interval', methods=['GET', 'POST'])
+def api_config_update_interval():
+    """API endpoint to get or set the metrics update interval."""
+    global metrics_update_interval
+    
+    if request.method == 'GET':
+        return jsonify({
+            'interval': metrics_update_interval,
+            'description': 'Metrics update interval in seconds (how often web app checks for new metrics)'
+        })
+    
+    elif request.method == 'POST':
+        data = request.json or {}
+        interval = data.get('interval')
+        
+        if interval is None:
+            return jsonify({
+                'status': 'error',
+                'message': 'interval parameter is required'
+            }), 400
+        
+        try:
+            interval = float(interval)
+            if interval < 0.1:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'interval must be at least 0.1 seconds'
+                }), 400
+            if interval > 60:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'interval must be at most 60 seconds'
+                }), 400
+            
+            metrics_update_interval = interval
+            print(f"Metrics update interval changed to: {interval}s")
+            
+            return jsonify({
+                'status': 'success',
+                'message': f'Update interval set to {interval}s',
+                'interval': metrics_update_interval
+            })
+        except (ValueError, TypeError):
+            return jsonify({
+                'status': 'error',
+                'message': 'interval must be a valid number'
+            }), 400
 
 
 if __name__ == '__main__':
