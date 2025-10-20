@@ -59,8 +59,8 @@
                         <span class="info-value" id="elapsed-time">-</span>
                     </div>
                     <div class="info-item">
-                        <span class="info-label">Datapoints:</span>
-                        <span class="info-value" id="num-datapoints">0</span>
+                        <span class="info-label">Episodes:</span>
+                        <span class="info-value" id="num-episodes">0</span>
                     </div>
                 </div>
             </div>
@@ -69,23 +69,18 @@
                 <h3>Latest Metrics</h3>
                 <div class="info-content">
                     <div class="info-item">
-                        <span class="info-label">Step:</span>
-                        <span class="info-value" id="latest-step">0</span>
+                        <span class="info-label">Episode:</span>
+                        <span class="info-value" id="latest-episode">0</span>
                     </div>
                     <div class="info-item">
-                        <span class="info-label">Score:</span>
-                        <span class="info-value" id="latest-score">0.000</span>
-                        <span class="info-sublabel">(MA: <span id="latest-score-ma">0.000</span>)</span>
+                        <span class="info-label">Puzzle Accuracy:</span>
+                        <span class="info-value" id="latest-accuracy">0.000</span>
+                        <span class="info-sublabel">(MA: <span id="latest-accuracy-ma">0.000</span>)</span>
                     </div>
                     <div class="info-item">
                         <span class="info-label">Episode Length:</span>
                         <span class="info-value" id="latest-length">0</span>
                         <span class="info-sublabel">(MA: <span id="latest-length-ma">0.0</span>)</span>
-                    </div>
-                    <div class="info-item">
-                        <span class="info-label">FPS:</span>
-                        <span class="info-value" id="latest-fps">0.0</span>
-                        <span class="info-sublabel">(MA: <span id="latest-fps-ma">0.0</span>)</span>
                     </div>
                 </div>
             </div>
@@ -110,18 +105,13 @@
 
         <div class="charts-container">
             <div class="chart-card">
-                <h3>Score (Accuracy) Over Time</h3>
-                <canvas id="score-chart"></canvas>
+                <h3>Puzzle Reconstruction Accuracy</h3>
+                <canvas id="accuracy-chart"></canvas>
             </div>
 
             <div class="chart-card">
                 <h3>Episode Length Over Time</h3>
                 <canvas id="length-chart"></canvas>
-            </div>
-
-            <div class="chart-card">
-                <h3>FPS Over Time</h3>
-                <canvas id="fps-chart"></canvas>
             </div>
         </div>
 

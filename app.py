@@ -24,11 +24,9 @@ training_thread = None
 log_monitor_thread = None
 is_training = False
 metrics_data = {
-    'steps': deque(maxlen=1000),
-    'scores': deque(maxlen=1000),
+    'episodes': deque(maxlen=1000),  # Episode numbers
+    'accuracies': deque(maxlen=1000),  # Final accuracy at end of each episode
     'lengths': deque(maxlen=1000),
-    'train_loss': deque(maxlen=1000),
-    'fps': deque(maxlen=1000),
     'timestamps': deque(maxlen=1000),
 }
 console_logs = deque(maxlen=500)  # Store last 500 lines of console output
@@ -106,6 +104,7 @@ def monitor_training():
     # Monitor the files
     last_position = 0
     last_scores_position = 0
+    episode_count = 0
     
     while is_training:
         try:
@@ -120,27 +119,16 @@ def monitor_training():
                         if line.strip():
                             try:
                                 metric = json.loads(line)
-                                step = metric.get('step', 0)
                                 
-                                # Extract various metrics
-                                if 'episode/score' in metric:
-                                    metrics_data['steps'].append(step)
-                                    metrics_data['scores'].append(metric['episode/score'])
-                                    metrics_data['timestamps'].append(time.time())
-                                
-                                if 'episode/length' in metric:
+                                # Only capture metrics at the end of episodes
+                                # Both episode/score and episode/length appear together
+                                if 'episode/score' in metric and 'episode/length' in metric:
+                                    episode_count += 1
+                                    # The score is the final accuracy of puzzle reconstruction
+                                    metrics_data['episodes'].append(episode_count)
+                                    metrics_data['accuracies'].append(metric['episode/score'])
                                     metrics_data['lengths'].append(metric['episode/length'])
-                                
-                                # Extract training loss (may vary by model)
-                                for key in metric:
-                                    if 'loss' in key.lower() or 'train/' in key:
-                                        if 'train_loss' not in metrics_data:
-                                            metrics_data['train_loss'] = deque(maxlen=1000)
-                                        metrics_data['train_loss'].append(metric[key])
-                                        break
-                                
-                                if 'fps/policy' in metric:
-                                    metrics_data['fps'].append(metric['fps/policy'])
+                                    metrics_data['timestamps'].append(time.time())
                                     
                             except json.JSONDecodeError:
                                 continue
@@ -270,7 +258,7 @@ def api_status():
     status_data = {
         'is_training': is_training,
         'logdir': current_logdir,
-        'num_datapoints': len(metrics_data['steps']),
+        'num_episodes': len(metrics_data['episodes']),
         'num_log_lines': len(console_logs),
     }
     
@@ -286,41 +274,29 @@ def api_metrics():
     window = request.args.get('window', 10, type=int)
     
     # Convert deques to lists
-    steps = list(metrics_data['steps'])
-    scores = list(metrics_data['scores'])
+    episodes = list(metrics_data['episodes'])
+    accuracies = list(metrics_data['accuracies'])
     lengths = list(metrics_data['lengths'])
-    train_loss = list(metrics_data.get('train_loss', []))
-    fps = list(metrics_data['fps'])
     
     # Calculate moving averages
-    scores_ma = calculate_moving_average(scores, window)
+    accuracies_ma = calculate_moving_average(accuracies, window)
     lengths_ma = calculate_moving_average(lengths, window)
-    train_loss_ma = calculate_moving_average(train_loss, window) if train_loss else []
-    fps_ma = calculate_moving_average(fps, window)
     
     # Get latest values
     latest = {
-        'step': steps[-1] if steps else 0,
-        'score': scores[-1] if scores else 0,
-        'score_ma': scores_ma[-1] if scores_ma else 0,
+        'episode': episodes[-1] if episodes else 0,
+        'accuracy': accuracies[-1] if accuracies else 0,
+        'accuracy_ma': accuracies_ma[-1] if accuracies_ma else 0,
         'length': lengths[-1] if lengths else 0,
         'length_ma': lengths_ma[-1] if lengths_ma else 0,
-        'train_loss': train_loss[-1] if train_loss else 0,
-        'train_loss_ma': train_loss_ma[-1] if train_loss_ma else 0,
-        'fps': fps[-1] if fps else 0,
-        'fps_ma': fps_ma[-1] if fps_ma else 0,
     }
     
     return jsonify({
-        'steps': steps,
-        'scores': scores,
-        'scores_ma': scores_ma,
+        'episodes': episodes,
+        'accuracies': accuracies,
+        'accuracies_ma': accuracies_ma,
         'lengths': lengths,
         'lengths_ma': lengths_ma,
-        'train_loss': train_loss,
-        'train_loss_ma': train_loss_ma,
-        'fps': fps,
-        'fps_ma': fps_ma,
         'latest': latest,
     })
 
@@ -349,11 +325,9 @@ def api_clear():
     global metrics_data, console_logs
     
     metrics_data = {
-        'steps': deque(maxlen=1000),
-        'scores': deque(maxlen=1000),
+        'episodes': deque(maxlen=1000),  # Episode numbers
+        'accuracies': deque(maxlen=1000),  # Final accuracy at end of each episode
         'lengths': deque(maxlen=1000),
-        'train_loss': deque(maxlen=1000),
-        'fps': deque(maxlen=1000),
         'timestamps': deque(maxlen=1000),
     }
     console_logs.clear()
