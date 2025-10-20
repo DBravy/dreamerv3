@@ -34,6 +34,12 @@ console_logs = deque(maxlen=500)  # Store last 500 lines of console output
 current_logdir = None
 training_start_time = None
 
+# Configurable refresh intervals (in seconds)
+refresh_settings = {
+    'server_monitor_interval': 0.5,  # How often server checks metrics file (default: 0.5s)
+    'client_poll_interval': 1.5,     # How often client polls for updates (default: 1.5s)
+}
+
 
 def calculate_moving_average(data, window=10):
     """Calculate moving average for a sequence of values."""
@@ -74,7 +80,7 @@ def monitor_console_output():
 
 def monitor_training():
     """Monitor training logs and extract metrics."""
-    global is_training, current_logdir, metrics_data
+    global is_training, current_logdir, metrics_data, refresh_settings
     
     # Wait for logdir to be created
     max_wait = 30  # seconds
@@ -101,6 +107,7 @@ def monitor_training():
         waited += 0.5
     
     print(f"Monitoring metrics from: {metrics_file}")
+    print(f"Server monitor interval: {refresh_settings['server_monitor_interval']}s")
     
     # Monitor the files
     last_position = 0
@@ -151,11 +158,12 @@ def monitor_training():
                     new_lines = f.readlines()
                     last_scores_position = f.tell()
             
-            time.sleep(1)  # Check every second
+            # Use configurable monitor interval
+            time.sleep(refresh_settings['server_monitor_interval'])
             
         except Exception as e:
             print(f"Error monitoring metrics: {e}")
-            time.sleep(1)
+            time.sleep(refresh_settings['server_monitor_interval'])
 
 
 def start_training_process(config='arc', custom_args=''):
@@ -351,6 +359,44 @@ def api_clear():
     console_logs.clear()
     
     return jsonify({'status': 'success', 'message': 'Metrics and logs cleared'})
+
+
+@app.route('/api/refresh-settings', methods=['GET'])
+def api_get_refresh_settings():
+    """API endpoint to get current refresh settings."""
+    return jsonify(refresh_settings)
+
+
+@app.route('/api/refresh-settings', methods=['POST'])
+def api_set_refresh_settings():
+    """API endpoint to update refresh settings."""
+    global refresh_settings
+    
+    data = request.json or {}
+    
+    # Validate and update server monitor interval
+    if 'server_monitor_interval' in data:
+        interval = float(data['server_monitor_interval'])
+        if 0.1 <= interval <= 10:  # Between 0.1s and 10s
+            refresh_settings['server_monitor_interval'] = interval
+        else:
+            return jsonify({'status': 'error', 'message': 'Server interval must be between 0.1 and 10 seconds'}), 400
+    
+    # Validate and update client poll interval
+    if 'client_poll_interval' in data:
+        interval = float(data['client_poll_interval'])
+        if 0.5 <= interval <= 30:  # Between 0.5s and 30s
+            refresh_settings['client_poll_interval'] = interval
+        else:
+            return jsonify({'status': 'error', 'message': 'Client interval must be between 0.5 and 30 seconds'}), 400
+    
+    print(f"Refresh settings updated: {refresh_settings}")
+    
+    return jsonify({
+        'status': 'success',
+        'message': 'Refresh settings updated',
+        'settings': refresh_settings
+    })
 
 
 if __name__ == '__main__':

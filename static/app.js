@@ -2,6 +2,7 @@
 let isTraining = false;
 let updateInterval = null;
 let charts = {};
+let currentPollInterval = 1500; // Default 1.5 seconds (in milliseconds)
 
 // Chart configurations
 const chartConfig = {
@@ -349,6 +350,90 @@ async function clearMetrics() {
     }
 }
 
+// Load refresh settings
+async function loadRefreshSettings() {
+    try {
+        const response = await fetch('/api/refresh-settings');
+        const settings = await response.json();
+        
+        // Update UI with current settings
+        document.getElementById('server-interval').value = settings.server_monitor_interval;
+        document.getElementById('client-interval').value = settings.client_poll_interval;
+        
+        // Update the poll interval
+        currentPollInterval = settings.client_poll_interval * 1000;
+        
+        // Update display values
+        document.getElementById('server-interval-value').textContent = settings.server_monitor_interval.toFixed(1);
+        document.getElementById('client-interval-value').textContent = settings.client_poll_interval.toFixed(1);
+        
+    } catch (error) {
+        console.error('Error loading refresh settings:', error);
+    }
+}
+
+// Save refresh settings
+async function saveRefreshSettings() {
+    const serverInterval = parseFloat(document.getElementById('server-interval').value);
+    const clientInterval = parseFloat(document.getElementById('client-interval').value);
+    
+    try {
+        const response = await fetch('/api/refresh-settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                server_monitor_interval: serverInterval,
+                client_poll_interval: clientInterval
+            })
+        });
+
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            console.log('Refresh settings updated successfully');
+            
+            // Update the poll interval and restart the update loop
+            currentPollInterval = clientInterval * 1000;
+            restartUpdateInterval();
+            
+            // Show success feedback
+            const btn = document.getElementById('save-refresh-btn');
+            const originalText = btn.textContent;
+            btn.textContent = '✓ Saved';
+            btn.style.backgroundColor = '#10b981';
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.style.backgroundColor = '';
+            }, 2000);
+        } else {
+            alert('Error updating settings: ' + result.message);
+        }
+    } catch (error) {
+        console.error('Error saving refresh settings:', error);
+        alert('Error saving refresh settings: ' + error.message);
+    }
+}
+
+// Restart the update interval with new timing
+function restartUpdateInterval() {
+    if (updateInterval) {
+        clearInterval(updateInterval);
+    }
+    
+    // Set up periodic updates with new interval
+    updateInterval = setInterval(() => {
+        updateStatus();
+        updateConsoleLogs();
+        if (isTraining) {
+            updateMetrics();
+        }
+    }, currentPollInterval);
+    
+    console.log(`Update interval restarted: ${currentPollInterval}ms`);
+}
+
 // Event listeners
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize charts
@@ -358,23 +443,37 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('start-btn').addEventListener('click', startTraining);
     document.getElementById('stop-btn').addEventListener('click', stopTraining);
     document.getElementById('clear-btn').addEventListener('click', clearMetrics);
+    document.getElementById('save-refresh-btn').addEventListener('click', saveRefreshSettings);
 
     // Update window size when changed
     document.getElementById('window-size').addEventListener('change', updateMetrics);
+    
+    // Update slider displays when changed
+    document.getElementById('server-interval').addEventListener('input', function(e) {
+        document.getElementById('server-interval-value').textContent = parseFloat(e.target.value).toFixed(1);
+    });
+    document.getElementById('client-interval').addEventListener('input', function(e) {
+        document.getElementById('client-interval-value').textContent = parseFloat(e.target.value).toFixed(1);
+    });
+
+    // Load refresh settings
+    loadRefreshSettings();
 
     // Initial status update
     updateStatus();
     updateMetrics();
     updateConsoleLogs();
 
-    // Set up periodic updates
-    updateInterval = setInterval(() => {
-        updateStatus();
-        updateConsoleLogs();  // Always update logs when training
-        if (isTraining) {
-            updateMetrics();
-        }
-    }, 2000); // Update every 2 seconds
+    // Set up periodic updates with loaded interval
+    setTimeout(() => {
+        updateInterval = setInterval(() => {
+            updateStatus();
+            updateConsoleLogs();
+            if (isTraining) {
+                updateMetrics();
+            }
+        }, currentPollInterval);
+    }, 100);  // Small delay to let settings load first
 });
 
 // Clean up on page unload
