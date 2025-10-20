@@ -98,10 +98,12 @@ class ARC(embodied.Env):
     def act_space(self):
         """Define action space for grid editing."""
         return {
-            'action_type': elements.Space(np.int32, (), 0, 3),  # 0:paint, 1:copy, 2:done
+            'action_type': elements.Space(np.int32, (), 0, 4),  # 0:paint, 1:copy, 2:resize, 3:done
             'x': elements.Space(np.int32, (), 0, 29),
             'y': elements.Space(np.int32, (), 0, 29),
             'color': elements.Space(np.int32, (), 0, 9),
+            'width': elements.Space(np.int32, (), 1, 30),   # Target width for resize
+            'height': elements.Space(np.int32, (), 1, 30),  # Target height for resize
             'reset': elements.Space(bool),
         }
     
@@ -120,7 +122,7 @@ class ARC(embodied.Env):
         
         # Check if done
         is_done = (
-            action['action_type'] == 2 or  # "done" action
+            action['action_type'] == 3 or  # "done" action
             self.step_count >= self.length
         )
         
@@ -162,8 +164,8 @@ class ARC(embodied.Env):
         self.test_input = np.array(test['input'], dtype=np.uint8)
         self.test_output = np.array(test['output'], dtype=np.uint8)
         
-        # Initialize blank working grid (same size as test output)
-        self.current_output = np.zeros_like(self.test_output)
+        # Initialize blank 3x3 working grid
+        self.current_output = np.zeros((3, 3), dtype=np.uint8)
         self.step_count = 0
         
         # Return initial observation
@@ -180,28 +182,77 @@ class ARC(embodied.Env):
         action_type = action['action_type']
         x, y = action['x'], action['y']
         
-        # Bounds check
-        h, w = self.current_output.shape
-        if not (0 <= x < h and 0 <= y < w):
-            return  # Invalid position, ignore
-        
         if action_type == 0:  # Paint
-            color = action['color']
-            self.current_output[x, y] = color
+            h, w = self.current_output.shape
+            if 0 <= x < h and 0 <= y < w:
+                color = action['color']
+                self.current_output[x, y] = color
         
         elif action_type == 1:  # Copy from input
-            if x < self.test_input.shape[0] and y < self.test_input.shape[1]:
-                self.current_output[x, y] = self.test_input[x, y]
+            h, w = self.current_output.shape
+            if 0 <= x < h and 0 <= y < w:
+                if x < self.test_input.shape[0] and y < self.test_input.shape[1]:
+                    self.current_output[x, y] = self.test_input[x, y]
         
-        # action_type == 2 is "done", no grid modification
+        elif action_type == 2:  # Resize
+            new_height = int(np.clip(action['height'], 1, 30))
+            new_width = int(np.clip(action['width'], 1, 30))
+            
+            # Create new grid
+            new_grid = np.zeros((new_height, new_width), dtype=np.uint8)
+            
+            # Copy existing content where it fits (preserve content)
+            old_h, old_w = self.current_output.shape
+            copy_h = min(old_h, new_height)
+            copy_w = min(old_w, new_width)
+            new_grid[:copy_h, :copy_w] = self.current_output[:copy_h, :copy_w]
+            
+            self.current_output = new_grid
+        
+        # action_type == 3 is "done", no grid modification
     
     def _calculate_reward(self):
-        """Reward based on similarity to ground truth."""
-        # Reward: percentage of correct cells
-        correct = (self.current_output == self.test_output)
-        accuracy = correct.sum() / self.test_output.size
+        """
+        Reward based on similarity to ground truth and size matching.
         
-        return float(accuracy)
+        Reward components:
+        1. Size accuracy: Reward for getting closer to correct dimensions
+        2. Content accuracy: Percentage of correct cells (in overlapping region)
+        3. Bonus: Extra reward for exact size match
+        """
+        target_h, target_w = self.test_output.shape
+        current_h, current_w = self.current_output.shape
+        
+        # Component 1: Size accuracy (0 to 0.3)
+        # Distance from correct size (Manhattan distance normalized)
+        h_diff = abs(current_h - target_h)
+        w_diff = abs(current_w - target_w)
+        max_diff = 30 + 30  # Maximum possible difference
+        size_distance = (h_diff + w_diff) / max_diff
+        size_accuracy = (1.0 - size_distance) * 0.3
+        
+        # Component 2: Content accuracy (0 to 0.6)
+        # Calculate accuracy on the overlapping region
+        min_h = min(current_h, target_h)
+        min_w = min(current_w, target_w)
+        
+        if min_h > 0 and min_w > 0:
+            overlap_correct = (
+                self.current_output[:min_h, :min_w] == 
+                self.test_output[:min_h, :min_w]
+            ).sum()
+            # Normalize by target size (not overlap size) to penalize wrong dimensions
+            content_accuracy = (overlap_correct / self.test_output.size) * 0.6
+        else:
+            content_accuracy = 0.0
+        
+        # Component 3: Exact size bonus (0 or 0.1)
+        exact_size_bonus = 0.1 if (current_h == target_h and current_w == target_w) else 0.0
+        
+        # Total reward
+        reward = size_accuracy + content_accuracy + exact_size_bonus
+        
+        return float(reward)
     
     def _get_observation(self):
         """Generate observation dict with all paired images."""
