@@ -243,11 +243,6 @@ def make_env(config, index, **overrides):
     kwargs['seed'] = hash((config.seed, index)) % (2 ** 32 - 1)
   if kwargs.pop('use_logdir', False):
     kwargs['logdir'] = elements.Path(config.logdir) / f'env{index}'
-  
-  # Set LOGDIR environment variable for ARC environment
-  if suite == 'arc':
-    os.environ['LOGDIR'] = str(config.logdir)
-  
   env = ctor(task, **kwargs)
   return wrap_env(env, config)
 
