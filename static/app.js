@@ -205,6 +205,48 @@ async function updateMetrics() {
     }
 }
 
+// Fetch and update console logs
+async function updateConsoleLogs() {
+    try {
+        const response = await fetch('/api/logs');
+        const data = await response.json();
+
+        const consoleOutput = document.getElementById('console-output');
+        const autoScroll = document.getElementById('auto-scroll-checkbox').checked;
+        
+        if (data.logs && data.logs.length > 0) {
+            // Clear empty message if present
+            if (consoleOutput.querySelector('.console-empty')) {
+                consoleOutput.innerHTML = '';
+            }
+
+            // Only update if there are new logs
+            const currentLineCount = consoleOutput.querySelectorAll('.console-line').length;
+            if (data.logs.length !== currentLineCount) {
+                // Rebuild the console output
+                consoleOutput.innerHTML = data.logs.map(log => 
+                    `<div class="console-line">${escapeHtml(log)}</div>`
+                ).join('');
+
+                // Auto-scroll to bottom if enabled
+                if (autoScroll) {
+                    consoleOutput.scrollTop = consoleOutput.scrollHeight;
+                }
+            }
+        }
+
+    } catch (error) {
+        console.error('Error fetching console logs:', error);
+    }
+}
+
+// Helper function to escape HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // Fetch and update status
 async function updateStatus() {
     try {
@@ -309,6 +351,10 @@ async function clearMetrics() {
                 }
                 chart.update();
             }
+            
+            // Clear console output
+            const consoleOutput = document.getElementById('console-output');
+            consoleOutput.innerHTML = '<div class="console-empty">No output yet. Start training to see logs...</div>';
         } else {
             alert('Error clearing metrics: ' + result.message);
         }
@@ -334,10 +380,12 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initial status update
     updateStatus();
     updateMetrics();
+    updateConsoleLogs();
 
     // Set up periodic updates
     updateInterval = setInterval(() => {
         updateStatus();
+        updateConsoleLogs();  // Always update logs when training
         if (isTraining) {
             updateMetrics();
         }

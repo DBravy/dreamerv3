@@ -21,6 +21,7 @@ app = Flask(__name__)
 # Global state
 training_process = None
 training_thread = None
+log_monitor_thread = None
 is_training = False
 metrics_data = {
     'steps': deque(maxlen=1000),
@@ -30,6 +31,7 @@ metrics_data = {
     'fps': deque(maxlen=1000),
     'timestamps': deque(maxlen=1000),
 }
+console_logs = deque(maxlen=500)  # Store last 500 lines of console output
 current_logdir = None
 training_start_time = None
 
@@ -47,6 +49,28 @@ def calculate_moving_average(data, window=10):
         window_data = list(data)[start_idx:i+1]
         result.append(sum(window_data) / len(window_data))
     return result
+
+
+def monitor_console_output():
+    """Monitor and capture console output from the training process."""
+    global training_process, console_logs, is_training
+    
+    if training_process is None:
+        return
+    
+    try:
+        for line in iter(training_process.stdout.readline, ''):
+            if not is_training:
+                break
+            
+            if line:
+                # Add timestamp to log line
+                timestamp = datetime.now().strftime('%H:%M:%S')
+                log_entry = f"[{timestamp}] {line.rstrip()}"
+                console_logs.append(log_entry)
+                print(log_entry)  # Also print to server console
+    except Exception as e:
+        print(f"Error monitoring console output: {e}")
 
 
 def monitor_training():
@@ -137,10 +161,13 @@ def monitor_training():
 
 def start_training_process(config='arc', custom_args=''):
     """Start the training process."""
-    global training_process, is_training, current_logdir, training_start_time, training_thread
+    global training_process, is_training, current_logdir, training_start_time, training_thread, log_monitor_thread, console_logs
     
     if is_training:
         return {'status': 'error', 'message': 'Training already running'}
+    
+    # Clear previous console logs
+    console_logs.clear()
     
     # Create timestamp for logdir
     timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -173,7 +200,11 @@ def start_training_process(config='arc', custom_args=''):
         is_training = True
         training_start_time = time.time()
         
-        # Start monitoring thread
+        # Start console output monitoring thread
+        log_monitor_thread = threading.Thread(target=monitor_console_output, daemon=True)
+        log_monitor_thread.start()
+        
+        # Start metrics monitoring thread
         training_thread = threading.Thread(target=monitor_training, daemon=True)
         training_thread.start()
         
@@ -240,6 +271,7 @@ def api_status():
         'is_training': is_training,
         'logdir': current_logdir,
         'num_datapoints': len(metrics_data['steps']),
+        'num_log_lines': len(console_logs),
     }
     
     if training_start_time:
@@ -293,10 +325,28 @@ def api_metrics():
     })
 
 
+@app.route('/api/logs', methods=['GET'])
+def api_logs():
+    """API endpoint to get console logs."""
+    # Get optional parameters
+    lines = request.args.get('lines', None, type=int)
+    
+    logs = list(console_logs)
+    
+    # Return only last N lines if specified
+    if lines is not None and lines > 0:
+        logs = logs[-lines:]
+    
+    return jsonify({
+        'logs': logs,
+        'total_lines': len(console_logs)
+    })
+
+
 @app.route('/api/clear', methods=['POST'])
 def api_clear():
     """API endpoint to clear metrics data."""
-    global metrics_data
+    global metrics_data, console_logs
     
     metrics_data = {
         'steps': deque(maxlen=1000),
@@ -306,8 +356,9 @@ def api_clear():
         'fps': deque(maxlen=1000),
         'timestamps': deque(maxlen=1000),
     }
+    console_logs.clear()
     
-    return jsonify({'status': 'success', 'message': 'Metrics cleared'})
+    return jsonify({'status': 'success', 'message': 'Metrics and logs cleared'})
 
 
 if __name__ == '__main__':
