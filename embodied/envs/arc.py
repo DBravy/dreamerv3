@@ -105,38 +105,38 @@ class ARC(embodied.Env):
             'color': elements.Space(np.int32, (), 0, 9),
             'reset': elements.Space(bool),
         }
-`    
-def step(self, action):
-    """Execute action and return observation."""
-    # Handle reset
-    if action['reset'] or self.current_puzzle is None:
-        return self._reset()
-    
-    # Execute action on the grid
-    self._execute_action(action)
-    self.step_count += 1
-    
-    # Calculate reward
-    reward = self._calculate_reward()
-    
-    # Check if done
-    is_done = (
-        action['action_type'] == 2 or  # "done" action
-        self.step_count >= self.length
-    )
-    
-    # Generate observation
-    obs = self._get_observation()
-    obs['reward'] = np.float32(reward)
-    obs['is_first'] = False
-    obs['is_last'] = is_done
-    obs['is_terminal'] = is_done
-    
-    # Add final accuracy when episode ends
-    if is_done:
-        obs['log_final_accuracy'] = np.float32(reward * 100.0)  # 0-100 scale
-    
-    return obs`
+   
+    def step(self, action):
+        """Execute action and return observation."""
+        # Handle reset
+        if action['reset'] or self.current_puzzle is None:
+            return self._reset()
+        
+        # Execute action on the grid
+        self._execute_action(action)
+        self.step_count += 1
+        
+        # Calculate reward
+        reward = self._calculate_reward()
+        
+        # Check if done
+        is_done = (
+            action['action_type'] == 2 or  # "done" action
+            self.step_count >= self.length
+        )
+        
+        # Generate observation
+        obs = self._get_observation()
+        obs['reward'] = np.float32(reward)
+        obs['is_first'] = False
+        obs['is_last'] = is_done
+        obs['is_terminal'] = is_done
+        
+        # Add final accuracy when episode ends
+        if is_done:
+            obs['log_final_accuracy'] = np.float32(reward * 100.0)  # 0-100 scale
+        
+        return obs
     
     def _reset(self):
         """Start a new episode with a random puzzle."""
