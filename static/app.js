@@ -2,7 +2,6 @@
 let isTraining = false;
 let updateInterval = null;
 let charts = {};
-let currentUpdateIntervalMs = 500; // Default 0.5 seconds in milliseconds
 
 // Chart configurations
 const chartConfig = {
@@ -260,13 +259,6 @@ async function updateStatus() {
 async function startTraining() {
     const config = document.getElementById('config-select').value;
     const customArgs = document.getElementById('custom-args').value;
-    const logEvery = document.getElementById('log-every').value;
-
-    // Build custom args with log_every prepended
-    let finalArgs = `--run.log_every ${logEvery}`;
-    if (customArgs.trim()) {
-        finalArgs += ' ' + customArgs.trim();
-    }
 
     try {
         const response = await fetch('/api/start', {
@@ -276,7 +268,7 @@ async function startTraining() {
             },
             body: JSON.stringify({
                 config: config,
-                custom_args: finalArgs
+                custom_args: customArgs
             })
         });
 
@@ -357,85 +349,6 @@ async function clearMetrics() {
     }
 }
 
-// Apply update interval
-async function applyUpdateInterval() {
-    const preset = document.getElementById('update-interval-preset').value;
-    const customValue = document.getElementById('update-interval-custom').value;
-    
-    let intervalSeconds;
-    if (preset === 'custom') {
-        intervalSeconds = parseFloat(customValue);
-    } else {
-        intervalSeconds = parseFloat(preset);
-    }
-    
-    try {
-        const response = await fetch('/api/config/update_interval', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                interval: intervalSeconds
-            })
-        });
-
-        const result = await response.json();
-        
-        if (result.status === 'success') {
-            currentUpdateIntervalMs = intervalSeconds * 1000;
-            
-            // Restart the update interval
-            if (updateInterval) {
-                clearInterval(updateInterval);
-            }
-            startUpdateLoop();
-            
-            // Update UI
-            document.getElementById('footer-update-interval').textContent = intervalSeconds + 's';
-            document.getElementById('interval-status').textContent = '✓ Applied';
-            document.getElementById('interval-status').style.color = '#10b981';
-            setTimeout(() => {
-                document.getElementById('interval-status').textContent = '';
-            }, 3000);
-            
-            console.log(`Update interval set to ${intervalSeconds}s`);
-        } else {
-            alert('Error setting update interval: ' + result.message);
-            document.getElementById('interval-status').textContent = '✗ Error';
-            document.getElementById('interval-status').style.color = '#ef4444';
-        }
-    } catch (error) {
-        console.error('Error setting update interval:', error);
-        alert('Error setting update interval: ' + error.message);
-        document.getElementById('interval-status').textContent = '✗ Error';
-        document.getElementById('interval-status').style.color = '#ef4444';
-    }
-}
-
-// Start the update loop
-function startUpdateLoop() {
-    updateInterval = setInterval(() => {
-        updateStatus();
-        updateConsoleLogs();
-        if (isTraining) {
-            updateMetrics();
-        }
-    }, currentUpdateIntervalMs);
-}
-
-// Handle preset selection
-function handlePresetChange() {
-    const preset = document.getElementById('update-interval-preset').value;
-    const customGroup = document.getElementById('custom-interval-group');
-    
-    if (preset === 'custom') {
-        customGroup.style.display = 'block';
-    } else {
-        customGroup.style.display = 'none';
-    }
-}
-
 // Event listeners
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize charts
@@ -449,17 +362,19 @@ document.addEventListener('DOMContentLoaded', function() {
     // Update window size when changed
     document.getElementById('window-size').addEventListener('change', updateMetrics);
 
-    // Set up update interval controls
-    document.getElementById('update-interval-preset').addEventListener('change', handlePresetChange);
-    document.getElementById('apply-interval-btn').addEventListener('click', applyUpdateInterval);
-
     // Initial status update
     updateStatus();
     updateMetrics();
     updateConsoleLogs();
 
     // Set up periodic updates
-    startUpdateLoop();
+    updateInterval = setInterval(() => {
+        updateStatus();
+        updateConsoleLogs();  // Always update logs when training
+        if (isTraining) {
+            updateMetrics();
+        }
+    }, 2000); // Update every 2 seconds
 });
 
 // Clean up on page unload

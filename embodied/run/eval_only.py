@@ -41,9 +41,12 @@ def eval_only(make_agent, make_env, make_logger, args):
         episode.add(key + '/sum', value, agg='sum')
     if tran['is_last']:
       result = episode.result()
+      # Log cumulative score for backward compatibility and final reward separately
+      final_reward = float(tran['reward'])
       logger.add({
           'score': result.pop('score'),
           'length': result.pop('length'),
+          'final_reward': final_reward,
       }, prefix='episode')
       rew = result.pop('rewards')
       if len(rew) > 1:
