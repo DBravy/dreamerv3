@@ -74,6 +74,14 @@ python dreamerv3/main.py \
   --run.train_ratio 32
 ```
 
+FOR ME:
+
+python dreamerv3/main.py \
+  --logdir ~/logdir/dreamer/{timestamp} \
+  --configs crafter \
+  --run.train_ratio 32 \
+  --jax.platform cpu
+
 To reproduce results, train on the desired task using the corresponding config,
 such as `--configs atari --task atari_pong`.
 
