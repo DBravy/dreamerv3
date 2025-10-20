@@ -121,10 +121,12 @@ def monitor_training():
                                 metric = json.loads(line)
                                 step = metric.get('step', 0)
                                 
-                                # Track final accuracy (only logged at end of episodes)
-                                if 'log_final_accuracy' in metric:
+                                # Extract end-of-episode accuracy
+                                # episode/score contains the final accuracy (0-1), convert to percentage (0-100)
+                                if 'episode/score' in metric:
                                     metrics_data['steps'].append(step)
-                                    metrics_data['accuracies'].append(metric['log_final_accuracy'])
+                                    accuracy_percent = metric['episode/score'] * 100.0  # Convert to 0-100%
+                                    metrics_data['accuracies'].append(accuracy_percent)
                                     metrics_data['timestamps'].append(time.time())
                                 
                                 if 'episode/length' in metric:
