@@ -44,7 +44,7 @@ const chartConfig = {
 
 // Initialize charts
 function initCharts() {
-    // Accuracy Chart
+    // Accuracy Chart (0-100%)
     const accuracyCtx = document.getElementById('accuracy-chart').getContext('2d');
     charts.accuracy = new Chart(accuracyCtx, {
         ...chartConfig,
@@ -52,13 +52,13 @@ function initCharts() {
             labels: [],
             datasets: [
                 {
-                    label: 'Puzzle Accuracy',
+                    label: 'Accuracy (%)',
                     data: [],
                     borderColor: 'rgba(102, 126, 234, 0.5)',
                     backgroundColor: 'rgba(102, 126, 234, 0.1)',
                     tension: 0.1,
                     borderWidth: 1,
-                    pointRadius: 3,
+                    pointRadius: 2,
                 },
                 {
                     label: 'Accuracy (Moving Avg)',
@@ -77,7 +77,7 @@ function initCharts() {
                 x: {
                     title: {
                         display: true,
-                        text: 'Episode'
+                        text: 'Steps'
                     },
                     ticks: {
                         maxTicksLimit: 10
@@ -86,10 +86,10 @@ function initCharts() {
                 y: {
                     title: {
                         display: true,
-                        text: 'Accuracy (0-1)'
+                        text: 'Accuracy (%)'
                     },
                     min: 0,
-                    max: 1
+                    max: 100
                 }
             }
         }
@@ -109,7 +109,7 @@ function initCharts() {
                     backgroundColor: 'rgba(16, 185, 129, 0.1)',
                     tension: 0.1,
                     borderWidth: 1,
-                    pointRadius: 3,
+                    pointRadius: 2,
                 },
                 {
                     label: 'Length (Moving Avg)',
@@ -121,26 +121,6 @@ function initCharts() {
                     pointRadius: 0,
                 }
             ]
-        },
-        options: {
-            ...chartConfig.options,
-            scales: {
-                x: {
-                    title: {
-                        display: true,
-                        text: 'Episode'
-                    },
-                    ticks: {
-                        maxTicksLimit: 10
-                    }
-                },
-                y: {
-                    title: {
-                        display: true,
-                        text: 'Steps'
-                    }
-                }
-            }
         }
     });
 }
@@ -182,25 +162,25 @@ async function updateMetrics() {
 
         // Update charts
         const maxPoints = 100; // Show last 100 points on chart
-        const startIdx = Math.max(0, data.episodes.length - maxPoints);
+        const startIdx = Math.max(0, data.steps.length - maxPoints);
 
         // Accuracy chart
-        charts.accuracy.data.labels = data.episodes.slice(startIdx);
+        charts.accuracy.data.labels = data.steps.slice(startIdx);
         charts.accuracy.data.datasets[0].data = data.accuracies.slice(startIdx);
         charts.accuracy.data.datasets[1].data = data.accuracies_ma.slice(startIdx);
         charts.accuracy.update('none');
 
         // Length chart
-        charts.length.data.labels = data.episodes.slice(startIdx);
+        charts.length.data.labels = data.steps.slice(startIdx);
         charts.length.data.datasets[0].data = data.lengths.slice(startIdx);
         charts.length.data.datasets[1].data = data.lengths_ma.slice(startIdx);
         charts.length.update('none');
 
         // Update latest values
         if (data.latest) {
-            document.getElementById('latest-episode').textContent = data.latest.episode || 0;
-            document.getElementById('latest-accuracy').textContent = (data.latest.accuracy || 0).toFixed(3);
-            document.getElementById('latest-accuracy-ma').textContent = (data.latest.accuracy_ma || 0).toFixed(3);
+            document.getElementById('latest-step').textContent = data.latest.step || 0;
+            document.getElementById('latest-accuracy').textContent = (data.latest.accuracy || 0).toFixed(1) + '%';
+            document.getElementById('latest-accuracy-ma').textContent = (data.latest.accuracy_ma || 0).toFixed(1) + '%';
             document.getElementById('latest-length').textContent = Math.round(data.latest.length || 0);
             document.getElementById('latest-length-ma').textContent = (data.latest.length_ma || 0).toFixed(1);
         }
@@ -262,7 +242,7 @@ async function updateStatus() {
         updateStatusUI(isTraining);
 
         document.getElementById('logdir').textContent = data.logdir || '-';
-        document.getElementById('num-episodes').textContent = data.num_episodes || 0;
+        document.getElementById('num-datapoints').textContent = data.num_datapoints || 0;
 
         if (data.elapsed_time) {
             document.getElementById('elapsed-time').textContent = formatElapsedTime(data.elapsed_time);
