@@ -78,7 +78,7 @@ class ARC(embodied.Env):
     @property
     def obs_space(self):
         """Define observation space with paired images."""
-        pair_shape = (self.size, self.size * 2, 3)  # input|output side-by-side
+        pair_shape = (self.size, self.size * 2, 3)
         
         return {
             'pair_1': elements.Space(np.uint8, pair_shape),
@@ -87,11 +87,12 @@ class ARC(embodied.Env):
             'pair_4': elements.Space(np.uint8, pair_shape),
             'pair_5': elements.Space(np.uint8, pair_shape),
             'test_pair': elements.Space(np.uint8, pair_shape),
-            'num_valid_pairs': elements.Space(np.int32, (), 0, 5),  # How many of pair_1-5 are real (0-5)
+            'num_valid_pairs': elements.Space(np.int32, (), 0, 5),
             'reward': elements.Space(np.float32),
             'is_first': elements.Space(bool),
             'is_last': elements.Space(bool),
             'is_terminal': elements.Space(bool),
+            'log_final_accuracy': elements.Space(np.float32),  # Add this
         }
     
     @property
@@ -104,34 +105,38 @@ class ARC(embodied.Env):
             'color': elements.Space(np.int32, (), 0, 9),
             'reset': elements.Space(bool),
         }
+`    
+def step(self, action):
+    """Execute action and return observation."""
+    # Handle reset
+    if action['reset'] or self.current_puzzle is None:
+        return self._reset()
     
-    def step(self, action):
-        """Execute action and return observation."""
-        # Handle reset
-        if action['reset'] or self.current_puzzle is None:
-            return self._reset()
-        
-        # Execute action on the grid
-        self._execute_action(action)
-        self.step_count += 1
-        
-        # Calculate reward
-        reward = self._calculate_reward()
-        
-        # Check if done
-        is_done = (
-            action['action_type'] == 2 or  # "done" action
-            self.step_count >= self.length
-        )
-        
-        # Generate observation
-        obs = self._get_observation()
-        obs['reward'] = np.float32(reward)
-        obs['is_first'] = False
-        obs['is_last'] = is_done
-        obs['is_terminal'] = is_done
-        
-        return obs
+    # Execute action on the grid
+    self._execute_action(action)
+    self.step_count += 1
+    
+    # Calculate reward
+    reward = self._calculate_reward()
+    
+    # Check if done
+    is_done = (
+        action['action_type'] == 2 or  # "done" action
+        self.step_count >= self.length
+    )
+    
+    # Generate observation
+    obs = self._get_observation()
+    obs['reward'] = np.float32(reward)
+    obs['is_first'] = False
+    obs['is_last'] = is_done
+    obs['is_terminal'] = is_done
+    
+    # Add final accuracy when episode ends
+    if is_done:
+        obs['log_final_accuracy'] = np.float32(reward * 100.0)  # 0-100 scale
+    
+    return obs`
     
     def _reset(self):
         """Start a new episode with a random puzzle."""
