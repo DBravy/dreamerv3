@@ -190,8 +190,12 @@ class ARC(embodied.Env):
                         idx = int(self.puzzle_index)
                     except Exception:
                         idx = 0
-                    idx = max(0, min(idx, len(self.puzzles) - 1))
-                    self.fixed_puzzle = self.puzzles[idx]
+                    # Treat negative indices or -1 as unset -> choose randomly
+                    if idx < 0:
+                        self.fixed_puzzle = random.choice(self.puzzles)
+                    else:
+                        idx = max(0, min(idx, len(self.puzzles) - 1))
+                        self.fixed_puzzle = self.puzzles[idx]
                 else:
                     self.fixed_puzzle = random.choice(self.puzzles)
             self.current_puzzle = self.fixed_puzzle
