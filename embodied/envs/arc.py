@@ -23,7 +23,7 @@ class ARC(embodied.Env):
         9: [135, 12, 37],       # Maroon
     }
     
-    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=100, size=64):
+    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=100, size=64, num_puzzles=None, specific_puzzle_index=None):
         """
         Args:
             task: Not used, but required by interface
@@ -32,6 +32,8 @@ class ARC(embodied.Env):
             split: 'training' or 'evaluation' (default: 'training')
             length: Maximum steps per episode
             size: Size to pad grids to (default 64×64)
+            num_puzzles: Number of puzzles to use (None = all puzzles)
+            specific_puzzle_index: If set, only use this specific puzzle (0-based index)
         """
         self.puzzle_dir = puzzle_dir
         self.version = version
@@ -41,12 +43,30 @@ class ARC(embodied.Env):
         
         # Construct the full path to puzzles
         self.full_puzzle_path = f"{puzzle_dir}/{version}/data/{split}"
-        self.puzzles = self._load_puzzles()
+        all_puzzles = self._load_puzzles()
         
-        if len(self.puzzles) == 0:
+        if len(all_puzzles) == 0:
             raise ValueError(f"No puzzles found in {self.full_puzzle_path}. Please check the path.")
         
-        print(f"Loaded {len(self.puzzles)} ARC puzzles from {self.full_puzzle_path} ({version}/{split})")
+        # Select puzzles based on parameters
+        if specific_puzzle_index is not None:
+            # Use only a specific puzzle
+            if specific_puzzle_index < 0 or specific_puzzle_index >= len(all_puzzles):
+                raise ValueError(f"specific_puzzle_index {specific_puzzle_index} out of range [0, {len(all_puzzles)-1}]")
+            self.puzzles = [all_puzzles[specific_puzzle_index]]
+            print(f"Using 1 specific puzzle (index {specific_puzzle_index}) from {self.full_puzzle_path} ({version}/{split})")
+        elif num_puzzles is not None:
+            # Use a limited number of puzzles
+            num_to_use = min(num_puzzles, len(all_puzzles))
+            # Randomly sample puzzles (with fixed seed for reproducibility)
+            import random
+            temp_random = random.Random(42)  # Fixed seed for consistency
+            self.puzzles = temp_random.sample(all_puzzles, num_to_use)
+            print(f"Using {len(self.puzzles)} randomly selected puzzles from {len(all_puzzles)} total ({version}/{split})")
+        else:
+            # Use all puzzles
+            self.puzzles = all_puzzles
+            print(f"Using all {len(self.puzzles)} ARC puzzles from {self.full_puzzle_path} ({version}/{split})")
         
         # Current episode state
         self.current_puzzle = None

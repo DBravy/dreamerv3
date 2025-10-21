@@ -293,17 +293,34 @@ async function updateStatus() {
 async function startTraining() {
     const config = document.getElementById('config-select').value;
     const customArgs = document.getElementById('custom-args').value;
-
+    const puzzleMode = document.getElementById('puzzle-mode').value;
+    
+    // Build request data
+    const requestData = {
+        config: config,
+        custom_args: customArgs
+    };
+    
+    // Add puzzle selection based on mode
+    if (puzzleMode === 'limited') {
+        const numPuzzles = parseInt(document.getElementById('num-puzzles').value);
+        if (numPuzzles > 0) {
+            requestData.num_puzzles = numPuzzles;
+        }
+    } else if (puzzleMode === 'single') {
+        const specificPuzzle = parseInt(document.getElementById('specific-puzzle').value);
+        if (specificPuzzle >= 0) {
+            requestData.specific_puzzle_index = specificPuzzle;
+        }
+    }
+    
     try {
         const response = await fetch('/api/start', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                config: config,
-                custom_args: customArgs
-            })
+            body: JSON.stringify(requestData)
         });
 
         const result = await response.json();
@@ -696,6 +713,24 @@ function toggleActionsView() {
     }
 }
 
+// Handle puzzle mode selection changes
+function handlePuzzleModeChange() {
+    const puzzleMode = document.getElementById('puzzle-mode').value;
+    const numPuzzlesGroup = document.getElementById('num-puzzles-group');
+    const specificPuzzleGroup = document.getElementById('specific-puzzle-group');
+    
+    // Hide all conditional groups first
+    numPuzzlesGroup.style.display = 'none';
+    specificPuzzleGroup.style.display = 'none';
+    
+    // Show appropriate group based on mode
+    if (puzzleMode === 'limited') {
+        numPuzzlesGroup.style.display = 'block';
+    } else if (puzzleMode === 'single') {
+        specificPuzzleGroup.style.display = 'block';
+    }
+}
+
 // Event listeners
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize charts
@@ -708,6 +743,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Update window size when changed
     document.getElementById('window-size').addEventListener('change', updateMetrics);
+
+    // Handle puzzle mode changes
+    document.getElementById('puzzle-mode').addEventListener('change', handlePuzzleModeChange);
 
     // Initial status update
     updateStatus();

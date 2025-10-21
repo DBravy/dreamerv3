@@ -176,7 +176,7 @@ def monitor_training():
             time.sleep(1)
 
 
-def start_training_process(config='arc', custom_args=''):
+def start_training_process(config='arc', custom_args='', num_puzzles=None, specific_puzzle_index=None):
     """Start the training process."""
     global training_process, is_training, current_logdir, training_start_time, training_thread, log_monitor_thread, console_logs
     
@@ -196,6 +196,12 @@ def start_training_process(config='arc', custom_args=''):
         '--configs', config,
         '--logdir', current_logdir,
     ]
+    
+    # Add puzzle selection parameters if provided
+    if specific_puzzle_index is not None:
+        cmd.extend(['--env.arc.specific_puzzle_index', str(specific_puzzle_index)])
+    elif num_puzzles is not None:
+        cmd.extend(['--env.arc.num_puzzles', str(num_puzzles)])
     
     # Add custom arguments if provided
     if custom_args:
@@ -269,8 +275,10 @@ def api_start():
     data = request.json or {}
     config = data.get('config', 'arc')
     custom_args = data.get('custom_args', '')
+    num_puzzles = data.get('num_puzzles', None)
+    specific_puzzle_index = data.get('specific_puzzle_index', None)
     
-    result = start_training_process(config, custom_args)
+    result = start_training_process(config, custom_args, num_puzzles, specific_puzzle_index)
     return jsonify(result)
 
 
