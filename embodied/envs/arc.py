@@ -63,6 +63,11 @@ class ARC(embodied.Env):
         
         # Track actions during episode
         self.action_history = []
+        
+        # Track which actions have been used to prevent repeats
+        self.has_copied = False
+        self.has_resized = False
+        self.painted_positions = set()  # Set of (x, y) tuples
     
     def _load_puzzles(self):
         """Load ARC JSON files from the specified version and split directory."""
@@ -193,6 +198,11 @@ class ARC(embodied.Env):
         # Clear action history for new episode
         self.action_history = []
         
+        # Reset action tracking to allow all actions in new episode
+        self.has_copied = False
+        self.has_resized = False
+        self.painted_positions = set()
+        
         # Return initial observation
         obs = self._get_observation()
         obs['reward'] = np.float32(0)
@@ -210,13 +220,32 @@ class ARC(embodied.Env):
         if action_type == 0:  # Paint
             h, w = self.current_output.shape
             if 0 <= x < h and 0 <= y < w:
+                # Check if this position has already been painted
+                if (x, y) in self.painted_positions:
+                    # Skip this action - position already painted
+                    return
+                
+                # Paint the cell and mark it as painted
                 color = action['color']
                 self.current_output[x, y] = color
+                self.painted_positions.add((x, y))
         
         elif action_type == 1:  # Copy entire input
+            # Check if copy has already been used
+            if self.has_copied:
+                # Skip this action - already copied once
+                return
+            
+            # Perform copy and mark as used
             self.current_output = self.test_input.copy()
+            self.has_copied = True
         
         elif action_type == 2:  # Resize
+            # Check if resize has already been used
+            if self.has_resized:
+                # Skip this action - already resized once
+                return
+            
             # Clip to valid range [1, 30], treating 0 as 1
             new_height = int(np.clip(action['height'], 1, 30))
             new_width = int(np.clip(action['width'], 1, 30))
@@ -231,6 +260,12 @@ class ARC(embodied.Env):
             new_grid[:copy_h, :copy_w] = self.current_output[:copy_h, :copy_w]
             
             self.current_output = new_grid
+            self.has_resized = True
+            
+            # Note: When resizing, we clear the painted_positions set since
+            # the grid dimensions have changed and positions may no longer be valid.
+            # This allows repainting at the same coordinates in the new grid size.
+            self.painted_positions.clear()
         
         # action_type == 3 is "done", no grid modification
     

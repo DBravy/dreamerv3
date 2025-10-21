@@ -641,12 +641,25 @@ async function updateGridVisualization() {
                 actionsContent.className = 'actions-content';
                 actionsContent.id = 'actions-content';
                 
-                // Start with compact view
-                actionsContent.innerHTML = createActionSummary(data.actions);
-                
                 // Store actions in global state for toggle
                 window.currentActions = data.actions;
-                window.actionsExpanded = false;
+                
+                // Preserve the expanded state if it exists, otherwise default to false
+                const wasExpanded = window.actionsExpanded || false;
+                window.actionsExpanded = wasExpanded;
+                
+                // Render based on current state
+                if (wasExpanded) {
+                    actionsContent.innerHTML = createActionList(data.actions);
+                    const toggleText = actionsHeader.querySelector('#actions-toggle-text');
+                    const toggleIcon = actionsHeader.querySelector('#actions-toggle-icon');
+                    if (toggleText) toggleText.textContent = 'Show Summary';
+                    if (toggleIcon) toggleIcon.textContent = '▲';
+                    actionsContent.style.maxHeight = '500px';
+                    actionsContent.style.overflowY = 'auto';
+                } else {
+                    actionsContent.innerHTML = createActionSummary(data.actions);
+                }
                 
                 actionsSection.appendChild(actionsHeader);
                 actionsSection.appendChild(actionsContent);
@@ -719,4 +732,3 @@ window.addEventListener('beforeunload', function() {
         clearInterval(updateInterval);
     }
 });
-
