@@ -33,6 +33,7 @@ metrics_data = {
 console_logs = deque(maxlen=500)  # Store last 500 lines of console output
 current_logdir = None
 training_start_time = None
+latest_episode_grids = None  # Store the latest episode's grid visualization
 
 
 def calculate_moving_average(data, window=10):
@@ -74,7 +75,7 @@ def monitor_console_output():
 
 def monitor_training():
     """Monitor training logs and extract metrics."""
-    global is_training, current_logdir, metrics_data
+    global is_training, current_logdir, metrics_data, latest_episode_grids
     
     # Wait for logdir to be created
     max_wait = 30  # seconds
@@ -92,6 +93,10 @@ def monitor_training():
     metrics_file = Path(current_logdir) / 'metrics.jsonl'
     scores_file = Path(current_logdir) / 'scores.jsonl'
     
+    # Episode grids are written to a fixed location by the environment
+    grids_file = Path('latest_episode.json')
+    last_grids_mtime = 0
+    
     # Wait for metrics file to be created
     waited = 0
     while waited < max_wait and is_training:
@@ -101,6 +106,7 @@ def monitor_training():
         waited += 0.5
     
     print(f"Monitoring metrics from: {metrics_file}")
+    print(f"Monitoring episode grids from: {grids_file}")
     
     # Monitor the files
     last_position = 0
@@ -150,6 +156,18 @@ def monitor_training():
                     f.seek(last_scores_position)
                     new_lines = f.readlines()
                     last_scores_position = f.tell()
+            
+            # Check for updated episode grids (based on file modification time)
+            if grids_file.exists():
+                try:
+                    current_mtime = grids_file.stat().st_mtime
+                    if current_mtime > last_grids_mtime:
+                        last_grids_mtime = current_mtime
+                        with open(grids_file, 'r') as f:
+                            grid_data = json.load(f)
+                            latest_episode_grids = grid_data
+                except Exception as e:
+                    print(f"Error reading episode grids: {e}")
             
             time.sleep(1)  # Check every second
             
@@ -336,10 +354,27 @@ def api_logs():
     })
 
 
+@app.route('/api/grids', methods=['GET'])
+def api_grids():
+    """API endpoint to get the latest episode grid visualization."""
+    global latest_episode_grids
+    
+    if latest_episode_grids is None:
+        return jsonify({
+            'status': 'no_data',
+            'message': 'No episode data available yet'
+        })
+    
+    return jsonify({
+        'status': 'success',
+        'data': latest_episode_grids
+    })
+
+
 @app.route('/api/clear', methods=['POST'])
 def api_clear():
     """API endpoint to clear metrics data."""
-    global metrics_data, console_logs
+    global metrics_data, console_logs, latest_episode_grids
     
     metrics_data = {
         'steps': deque(maxlen=1000),
@@ -349,6 +384,7 @@ def api_clear():
         'timestamps': deque(maxlen=1000),
     }
     console_logs.clear()
+    latest_episode_grids = None
     
     return jsonify({'status': 'success', 'message': 'Metrics and logs cleared'})
 

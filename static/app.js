@@ -3,6 +3,20 @@ let isTraining = false;
 let updateInterval = null;
 let charts = {};
 
+// ARC color palette (matches Python COLOR_MAP in arc.py)
+const ARC_COLORS = {
+    0: '#000000',  // Black
+    1: '#0074D9',  // Blue
+    2: '#FF4136',  // Red
+    3: '#2ECC40',  // Green
+    4: '#FFDC00',  // Yellow
+    5: '#AAAAAA',  // Gray
+    6: '#F012BE',  // Magenta
+    7: '#FF851B',  // Orange
+    8: '#7FDBFF',  // Light Blue
+    9: '#870C25',  // Maroon
+};
+
 // Chart configurations
 const chartConfig = {
     type: 'line',
@@ -340,12 +354,163 @@ async function clearMetrics() {
             // Clear console output
             const consoleOutput = document.getElementById('console-output');
             consoleOutput.innerHTML = '<div class="console-empty">No output yet. Start training to see logs...</div>';
+            
+            // Clear grids
+            const gridsContainer = document.getElementById('grids-container');
+            gridsContainer.innerHTML = '<div class="grids-empty">Start training to see episode reconstructions...</div>';
         } else {
             alert('Error clearing metrics: ' + result.message);
         }
     } catch (error) {
         console.error('Error clearing metrics:', error);
         alert('Error clearing metrics: ' + error.message);
+    }
+}
+
+// Render an ARC grid
+function renderARCGrid(gridData) {
+    if (!gridData || gridData.length === 0) {
+        return null;
+    }
+    
+    const height = gridData.length;
+    const width = gridData[0].length;
+    
+    const gridDiv = document.createElement('div');
+    gridDiv.className = 'arc-grid';
+    gridDiv.style.gridTemplateColumns = `repeat(${width}, 20px)`;
+    gridDiv.style.gridTemplateRows = `repeat(${height}, 20px)`;
+    
+    for (let row = 0; row < height; row++) {
+        for (let col = 0; col < width; col++) {
+            const cell = document.createElement('div');
+            cell.className = 'arc-cell';
+            const colorValue = gridData[row][col];
+            cell.style.backgroundColor = ARC_COLORS[colorValue] || '#000000';
+            gridDiv.appendChild(cell);
+        }
+    }
+    
+    return gridDiv;
+}
+
+// Calculate accuracy between two grids
+function calculateGridAccuracy(agentGrid, targetGrid) {
+    if (!agentGrid || !targetGrid) return 0;
+    
+    const targetHeight = targetGrid.length;
+    const targetWidth = targetGrid[0].length;
+    const agentHeight = agentGrid.length;
+    const agentWidth = agentGrid[0].length;
+    
+    let correctCells = 0;
+    const totalCells = targetHeight * targetWidth;
+    
+    // Check overlapping region
+    const minHeight = Math.min(agentHeight, targetHeight);
+    const minWidth = Math.min(agentWidth, targetWidth);
+    
+    for (let row = 0; row < minHeight; row++) {
+        for (let col = 0; col < minWidth; col++) {
+            if (agentGrid[row][col] === targetGrid[row][col]) {
+                correctCells++;
+            }
+        }
+    }
+    
+    // Penalize for wrong size (cells outside overlap are wrong)
+    return (correctCells / totalCells) * 100;
+}
+
+// Fetch and update grid visualization
+async function updateGridVisualization() {
+    try {
+        const response = await fetch('/api/grids');
+        const result = await response.json();
+        
+        const gridsContainer = document.getElementById('grids-container');
+        
+        if (result.status === 'no_data') {
+            // Keep the empty message
+            return;
+        }
+        
+        if (result.status === 'success' && result.data) {
+            const data = result.data;
+            
+            // Clear container
+            gridsContainer.innerHTML = '';
+            
+            // Create sections for each grid
+            const testInputSection = document.createElement('div');
+            testInputSection.className = 'grid-section';
+            testInputSection.innerHTML = '<div class="grid-label">Test Input</div>';
+            const testInputGrid = renderARCGrid(data.test_input);
+            if (testInputGrid) {
+                testInputSection.appendChild(testInputGrid);
+                const sizeLabel = document.createElement('div');
+                sizeLabel.className = 'grid-sublabel';
+                sizeLabel.textContent = `${data.test_input.length}×${data.test_input[0].length}`;
+                testInputSection.appendChild(sizeLabel);
+            }
+            
+            const agentOutputSection = document.createElement('div');
+            agentOutputSection.className = 'grid-section';
+            agentOutputSection.innerHTML = '<div class="grid-label">Agent Output</div>';
+            const agentOutputGrid = renderARCGrid(data.agent_output);
+            if (agentOutputGrid) {
+                agentOutputSection.appendChild(agentOutputGrid);
+                const sizeLabel = document.createElement('div');
+                sizeLabel.className = 'grid-sublabel';
+                sizeLabel.textContent = `${data.agent_output.length}×${data.agent_output[0].length}`;
+                agentOutputSection.appendChild(sizeLabel);
+            }
+            
+            const targetOutputSection = document.createElement('div');
+            targetOutputSection.className = 'grid-section';
+            targetOutputSection.innerHTML = '<div class="grid-label">Target Output</div>';
+            const targetOutputGrid = renderARCGrid(data.test_output);
+            if (targetOutputGrid) {
+                targetOutputSection.appendChild(targetOutputGrid);
+                const sizeLabel = document.createElement('div');
+                sizeLabel.className = 'grid-sublabel';
+                sizeLabel.textContent = `${data.test_output.length}×${data.test_output[0].length}`;
+                targetOutputSection.appendChild(sizeLabel);
+            }
+            
+            gridsContainer.appendChild(testInputSection);
+            gridsContainer.appendChild(agentOutputSection);
+            gridsContainer.appendChild(targetOutputSection);
+            
+            // Add stats
+            const accuracy = calculateGridAccuracy(data.agent_output, data.test_output);
+            const statsDiv = document.createElement('div');
+            statsDiv.className = 'grid-stats';
+            statsDiv.innerHTML = `
+                <div class="grid-stat">
+                    <span class="grid-stat-value">${accuracy.toFixed(1)}%</span>
+                    <span>Accuracy</span>
+                </div>
+                <div class="grid-stat">
+                    <span class="grid-stat-value">${data.final_reward.toFixed(3)}</span>
+                    <span>Reward</span>
+                </div>
+                <div class="grid-stat">
+                    <span class="grid-stat-value">${data.steps}</span>
+                    <span>Steps</span>
+                </div>
+            `;
+            
+            // Add stats as a full-width section
+            const statsSection = document.createElement('div');
+            statsSection.style.width = '100%';
+            statsSection.style.display = 'flex';
+            statsSection.style.justifyContent = 'center';
+            statsSection.appendChild(statsDiv);
+            gridsContainer.appendChild(statsSection);
+        }
+    } catch (error) {
+        console.error('Error fetching grid visualization:', error);
     }
 }
 
@@ -366,11 +531,13 @@ document.addEventListener('DOMContentLoaded', function() {
     updateStatus();
     updateMetrics();
     updateConsoleLogs();
+    updateGridVisualization();
 
     // Set up periodic updates
     updateInterval = setInterval(() => {
         updateStatus();
         updateConsoleLogs();  // Always update logs when training
+        updateGridVisualization();  // Always update grids
         if (isTraining) {
             updateMetrics();
         }

@@ -57,6 +57,9 @@ class ARC(embodied.Env):
         self.current_output = None
         self.step_count = 0
         self.num_valid_pairs = 0
+        
+        # Store last completed episode for visualization
+        self.last_episode_data = None
     
     def _load_puzzles(self):
         """Load ARC JSON files from the specified version and split directory."""
@@ -125,6 +128,10 @@ class ARC(embodied.Env):
             action['action_type'] == 3 or  # "done" action
             self.step_count >= self.length
         )
+        
+        # Save episode data when episode ends
+        if is_done:
+            self._save_episode_data(reward)
         
         # Generate observation
         obs = self._get_observation()
@@ -314,3 +321,28 @@ class ARC(embodied.Env):
             rgb[mask] = rgb_val
         
         return rgb
+    
+    def _save_episode_data(self, final_reward):
+        """Save the completed episode data for visualization."""
+        self.last_episode_data = {
+            'test_input': self.test_input.tolist(),
+            'test_output': self.test_output.tolist(),  # Ground truth
+            'agent_output': self.current_output.tolist(),  # Agent's final answer
+            'final_reward': float(final_reward),
+            'steps': int(self.step_count),
+        }
+        
+        # Write to a fixed file for web app to read
+        try:
+            import os
+            output_file = os.path.join(os.getcwd(), 'latest_episode.json')
+            with open(output_file, 'w') as f:
+                json.dump(self.last_episode_data, f)
+        except Exception as e:
+            print(f"Warning: Could not save episode visualization data: {e}")
+    
+    def get_last_episode_visualization(self):
+        """Get the last episode's grids for visualization."""
+        if self.last_episode_data is None:
+            return None
+        return self.last_episode_data
