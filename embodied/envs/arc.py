@@ -215,7 +215,7 @@ class ARC(embodied.Env):
     def _execute_action(self, action):
         """Modify the current_output grid based on action."""
         action_type = action['action_type']
-        x, y = action['x'], action['y']
+        x, y = int(action['x']), int(action['y'])
         
         if action_type == 0:  # Paint
             h, w = self.current_output.shape
