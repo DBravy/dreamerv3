@@ -17,6 +17,26 @@ const ARC_COLORS = {
     9: '#870C25',  // Maroon
 };
 
+const ACTION_TYPE_NAMES = {
+    0: 'Paint',
+    1: 'Copy',
+    2: 'Resize',
+    3: 'Done'
+};
+
+const COLOR_NAMES = {
+    0: 'Black',
+    1: 'Blue',
+    2: 'Red',
+    3: 'Green',
+    4: 'Yellow',
+    5: 'Gray',
+    6: 'Magenta',
+    7: 'Orange',
+    8: 'Light Blue',
+    9: 'Maroon'
+};
+
 // Chart configurations
 const chartConfig = {
     type: 'line',
@@ -422,6 +442,99 @@ function calculateGridAccuracy(agentGrid, targetGrid) {
     return (correctCells / totalCells) * 100;
 }
 
+// Format action for display
+function formatActionCompact(action) {
+    const type = ACTION_TYPE_NAMES[action.action_type];
+    let details = '';
+    
+    if (action.action_type === 0) { // Paint
+        const color = COLOR_NAMES[action.color];
+        details = `@(${action.x},${action.y}) ${color}`;
+    } else if (action.action_type === 2) { // Resize
+        details = `to ${action.width}×${action.height}`;
+    }
+    
+    return `${type}${details ? ' ' + details : ''}`;
+}
+
+function formatActionDetailed(action) {
+    const type = ACTION_TYPE_NAMES[action.action_type];
+    const parts = [`<strong>${type}</strong>`];
+    
+    if (action.action_type === 0) { // Paint
+        const color = COLOR_NAMES[action.color];
+        const colorStyle = ARC_COLORS[action.color];
+        parts.push(`<span>Position: (${action.x}, ${action.y})</span>`);
+        parts.push(`<span>Color: <span style="display: inline-block; width: 12px; height: 12px; background: ${colorStyle}; border: 1px solid #666; vertical-align: middle; margin-right: 4px;"></span>${color}</span>`);
+    } else if (action.action_type === 1) { // Copy
+        parts.push(`<span>Copied test input to output</span>`);
+    } else if (action.action_type === 2) { // Resize
+        parts.push(`<span>New size: ${action.width}×${action.height}</span>`);
+    } else if (action.action_type === 3) { // Done
+        parts.push(`<span>Episode terminated</span>`);
+    }
+    
+    return parts.join('<br>');
+}
+
+// Create action summary display
+function createActionSummary(actions) {
+    if (!actions || actions.length === 0) {
+        return '<div class="actions-empty">No actions recorded</div>';
+    }
+    
+    // Count action types
+    const counts = {0: 0, 1: 0, 2: 0, 3: 0};
+    actions.forEach(action => {
+        counts[action.action_type] = (counts[action.action_type] || 0) + 1;
+    });
+    
+    return `
+        <div class="actions-summary">
+            <div class="action-count">
+                <span class="action-icon">🎨</span>
+                <span>${counts[0]} Paint${counts[0] !== 1 ? 's' : ''}</span>
+            </div>
+            <div class="action-count">
+                <span class="action-icon">📋</span>
+                <span>${counts[1]} Copy</span>
+            </div>
+            <div class="action-count">
+                <span class="action-icon">📐</span>
+                <span>${counts[2]} Resize${counts[2] !== 1 ? 's' : ''}</span>
+            </div>
+            <div class="action-count">
+                <span class="action-icon">✅</span>
+                <span>${counts[3]} Done</span>
+            </div>
+        </div>
+    `;
+}
+
+// Create detailed action list
+function createActionList(actions) {
+    if (!actions || actions.length === 0) {
+        return '<div class="actions-empty">No actions recorded</div>';
+    }
+    
+    let html = '<div class="actions-list">';
+    
+    actions.forEach((action, idx) => {
+        const isLast = idx === actions.length - 1;
+        const actionClass = isLast ? 'action-item action-item-last' : 'action-item';
+        
+        html += `
+            <div class="${actionClass}">
+                <div class="action-step">Step ${action.step + 1}</div>
+                <div class="action-details">${formatActionDetailed(action)}</div>
+            </div>
+        `;
+    });
+    
+    html += '</div>';
+    return html;
+}
+
 // Fetch and update grid visualization
 async function updateGridVisualization() {
     try {
@@ -508,9 +621,65 @@ async function updateGridVisualization() {
             statsSection.style.justifyContent = 'center';
             statsSection.appendChild(statsDiv);
             gridsContainer.appendChild(statsSection);
+            
+            // Add actions section if actions exist
+            if (data.actions && data.actions.length > 0) {
+                const actionsSection = document.createElement('div');
+                actionsSection.className = 'actions-section';
+                
+                const actionsHeader = document.createElement('div');
+                actionsHeader.className = 'actions-header';
+                actionsHeader.innerHTML = `
+                    <h4>Agent Actions (${data.actions.length} total)</h4>
+                    <button class="actions-toggle" onclick="toggleActionsView()">
+                        <span id="actions-toggle-text">Show Details</span>
+                        <span id="actions-toggle-icon">▼</span>
+                    </button>
+                `;
+                
+                const actionsContent = document.createElement('div');
+                actionsContent.className = 'actions-content';
+                actionsContent.id = 'actions-content';
+                
+                // Start with compact view
+                actionsContent.innerHTML = createActionSummary(data.actions);
+                
+                // Store actions in global state for toggle
+                window.currentActions = data.actions;
+                window.actionsExpanded = false;
+                
+                actionsSection.appendChild(actionsHeader);
+                actionsSection.appendChild(actionsContent);
+                gridsContainer.appendChild(actionsSection);
+            }
         }
     } catch (error) {
         console.error('Error fetching grid visualization:', error);
+    }
+}
+
+// Toggle between compact and detailed action view
+function toggleActionsView() {
+    if (!window.currentActions) return;
+    
+    const content = document.getElementById('actions-content');
+    const toggleText = document.getElementById('actions-toggle-text');
+    const toggleIcon = document.getElementById('actions-toggle-icon');
+    
+    window.actionsExpanded = !window.actionsExpanded;
+    
+    if (window.actionsExpanded) {
+        content.innerHTML = createActionList(window.currentActions);
+        toggleText.textContent = 'Show Summary';
+        toggleIcon.textContent = '▲';
+        content.style.maxHeight = '500px';
+        content.style.overflowY = 'auto';
+    } else {
+        content.innerHTML = createActionSummary(window.currentActions);
+        toggleText.textContent = 'Show Details';
+        toggleIcon.textContent = '▼';
+        content.style.maxHeight = 'none';
+        content.style.overflowY = 'visible';
     }
 }
 

@@ -60,6 +60,9 @@ class ARC(embodied.Env):
         
         # Store last completed episode for visualization
         self.last_episode_data = None
+        
+        # Track actions during episode
+        self.action_history = []
     
     def _load_puzzles(self):
         """Load ARC JSON files from the specified version and split directory."""
@@ -115,6 +118,18 @@ class ARC(embodied.Env):
         # Handle reset
         if action['reset'] or self.current_puzzle is None:
             return self._reset()
+        
+        # Store action in history before executing
+        action_record = {
+            'step': self.step_count,
+            'action_type': int(action['action_type']),
+            'x': int(action['x']),
+            'y': int(action['y']),
+            'color': int(action['color']),
+            'width': int(action['width']),
+            'height': int(action['height']),
+        }
+        self.action_history.append(action_record)
         
         # Execute action on the grid
         self._execute_action(action)
@@ -175,6 +190,9 @@ class ARC(embodied.Env):
         self.current_output = np.zeros((3, 3), dtype=np.uint8)
         self.step_count = 0
         
+        # Clear action history for new episode
+        self.action_history = []
+        
         # Return initial observation
         obs = self._get_observation()
         obs['reward'] = np.float32(0)
@@ -195,11 +213,8 @@ class ARC(embodied.Env):
                 color = action['color']
                 self.current_output[x, y] = color
         
-        elif action_type == 1:  # Copy from input
-            h, w = self.current_output.shape
-            if 0 <= x < h and 0 <= y < w:
-                if x < self.test_input.shape[0] and y < self.test_input.shape[1]:
-                    self.current_output[x, y] = self.test_input[x, y]
+        elif action_type == 1:  # Copy entire input
+            self.current_output = self.test_input.copy()
         
         elif action_type == 2:  # Resize
             # Clip to valid range [1, 30], treating 0 as 1
@@ -330,6 +345,7 @@ class ARC(embodied.Env):
             'agent_output': self.current_output.tolist(),  # Agent's final answer
             'final_reward': float(final_reward),
             'steps': int(self.step_count),
+            'actions': self.action_history,  # Complete action history
         }
         
         # Write to a fixed file for web app to read
