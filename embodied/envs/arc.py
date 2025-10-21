@@ -98,12 +98,12 @@ class ARC(embodied.Env):
     def act_space(self):
         """Define action space for grid editing."""
         return {
-            'action_type': elements.Space(np.int32, (), 0, 4),  # 0:paint, 1:copy_input, 2:resize, 3:done
+            'action_type': elements.Space(np.int32, (), 0, 4),  # 0:paint, 1:copy, 2:resize, 3:done
             'x': elements.Space(np.int32, (), 0, 29),
             'y': elements.Space(np.int32, (), 0, 29),
             'color': elements.Space(np.int32, (), 0, 9),
-            'width': elements.Space(np.int32, (), 1, 30),   # Target width for resize
-            'height': elements.Space(np.int32, (), 1, 30),  # Target height for resize
+            'width': elements.Space(np.int32, (), 0, 30),   # Target width for resize
+            'height': elements.Space(np.int32, (), 0, 30),  # Target height for resize
             'reset': elements.Space(bool),
         }
     
@@ -188,11 +188,14 @@ class ARC(embodied.Env):
                 color = action['color']
                 self.current_output[x, y] = color
         
-        elif action_type == 1:  # Copy entire input
-            # Copy the full test input to current_output
-            self.current_output = self.test_input.copy()
+        elif action_type == 1:  # Copy from input
+            h, w = self.current_output.shape
+            if 0 <= x < h and 0 <= y < w:
+                if x < self.test_input.shape[0] and y < self.test_input.shape[1]:
+                    self.current_output[x, y] = self.test_input[x, y]
         
         elif action_type == 2:  # Resize
+            # Clip to valid range [1, 30], treating 0 as 1
             new_height = int(np.clip(action['height'], 1, 30))
             new_width = int(np.clip(action['width'], 1, 30))
             
