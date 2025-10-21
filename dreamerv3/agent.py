@@ -124,15 +124,20 @@ class Agent(embodied.jax.Agent):
       dec_carry, dec_entry, recons = self.dec(dec_carry, feat, reset, **kw)
     policy = self.pol(self.feat2tensor(feat), bdims=1)
     # Apply action mask to action_type if provided by env as 'valid_actions'
-    if 'valid_actions' in obs:
-      mask = f32(obs['valid_actions'])  # shape (B, 4)
-      # Prevent invalid actions by setting logits to large negative
-      if 'action_type' in policy:
-        logits = policy['action_type'].dist.logits
-        # Replace logits where mask==0 with very negative
-        neg_inf = jnp.full_like(logits, -1e9)
-        masked_logits = jnp.where(mask[..., None] == 1, logits, neg_inf)
+    if 'valid_actions' in obs and 'action_type' in policy:
+      mask = f32(obs['valid_actions'])  # (B, 4)
+      dist = policy['action_type']
+      # Get logits from either Categorical or OneHot(Categorical)
+      if hasattr(dist, 'dist'):
+        logits = dist.dist.logits
+      else:
+        logits = dist.logits
+      neg_inf = jnp.full_like(logits, -1e9)
+      masked_logits = jnp.where(mask == 1, logits, neg_inf)
+      if hasattr(dist, 'dist'):
         policy['action_type'].dist.logits = masked_logits
+      else:
+        policy['action_type'].logits = masked_logits
     act = sample(policy)
     out = {}
     out['finite'] = elements.tree.flatdict(jax.tree.map(
