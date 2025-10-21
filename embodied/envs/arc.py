@@ -23,7 +23,7 @@ class ARC(embodied.Env):
         9: [135, 12, 37],       # Maroon
     }
     
-    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=100, size=64, num_puzzles=None, specific_puzzle_index=None):
+    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=100, size=64, max_puzzles=None, repeat_single=False, puzzle_index=None):
         """
         Args:
             task: Not used, but required by interface
@@ -32,41 +32,27 @@ class ARC(embodied.Env):
             split: 'training' or 'evaluation' (default: 'training')
             length: Maximum steps per episode
             size: Size to pad grids to (default 64×64)
-            num_puzzles: Number of puzzles to use (None = all puzzles)
-            specific_puzzle_index: If set, only use this specific puzzle (0-based index)
+            max_puzzles: If set, limit the number of loaded puzzles to this many (use first N)
+            repeat_single: If True, select a single puzzle on first reset and repeat it every episode
+            puzzle_index: Optional explicit index into the loaded puzzles to always use (overrides random)
         """
         self.puzzle_dir = puzzle_dir
         self.version = version
         self.split = split
         self.length = length
         self.size = size
+        self.max_puzzles = max_puzzles
+        self.repeat_single = repeat_single
+        self.puzzle_index = puzzle_index
         
         # Construct the full path to puzzles
         self.full_puzzle_path = f"{puzzle_dir}/{version}/data/{split}"
-        all_puzzles = self._load_puzzles()
+        self.puzzles = self._load_puzzles()
         
-        if len(all_puzzles) == 0:
+        if len(self.puzzles) == 0:
             raise ValueError(f"No puzzles found in {self.full_puzzle_path}. Please check the path.")
         
-        # Select puzzles based on parameters
-        if specific_puzzle_index is not None:
-            # Use only a specific puzzle
-            if specific_puzzle_index < 0 or specific_puzzle_index >= len(all_puzzles):
-                raise ValueError(f"specific_puzzle_index {specific_puzzle_index} out of range [0, {len(all_puzzles)-1}]")
-            self.puzzles = [all_puzzles[specific_puzzle_index]]
-            print(f"Using 1 specific puzzle (index {specific_puzzle_index}) from {self.full_puzzle_path} ({version}/{split})")
-        elif num_puzzles is not None:
-            # Use a limited number of puzzles
-            num_to_use = min(num_puzzles, len(all_puzzles))
-            # Randomly sample puzzles (with fixed seed for reproducibility)
-            import random
-            temp_random = random.Random(42)  # Fixed seed for consistency
-            self.puzzles = temp_random.sample(all_puzzles, num_to_use)
-            print(f"Using {len(self.puzzles)} randomly selected puzzles from {len(all_puzzles)} total ({version}/{split})")
-        else:
-            # Use all puzzles
-            self.puzzles = all_puzzles
-            print(f"Using all {len(self.puzzles)} ARC puzzles from {self.full_puzzle_path} ({version}/{split})")
+        print(f"Loaded {len(self.puzzles)} ARC puzzles from {self.full_puzzle_path} ({version}/{split}); max_puzzles={self.max_puzzles}, repeat_single={self.repeat_single}, puzzle_index={self.puzzle_index}")
         
         # Current episode state
         self.current_puzzle = None
@@ -88,6 +74,7 @@ class ARC(embodied.Env):
         self.has_copied = False
         self.has_resized = False
         self.painted_positions = set()  # Set of (x, y) tuples
+        self.fixed_puzzle = None  # When repeat_single is True, hold onto the chosen puzzle
     
     def _load_puzzles(self):
         """Load ARC JSON files from the specified version and split directory."""
@@ -103,6 +90,15 @@ class ARC(embodied.Env):
                         puzzles.append(puzzle)
             except Exception as e:
                 print(f"Warning: Could not load {filepath}: {e}")
+        
+        # Optionally limit the number of puzzles
+        if self.max_puzzles is not None:
+            try:
+                maxn = int(self.max_puzzles)
+            except Exception:
+                maxn = None
+            if maxn is not None and maxn > 0:
+                puzzles = puzzles[:maxn]
         
         return puzzles
     
@@ -185,8 +181,22 @@ class ARC(embodied.Env):
     
     def _reset(self):
         """Start a new episode with a random puzzle."""
-        # Pick random puzzle
-        self.current_puzzle = random.choice(self.puzzles)
+        # Pick puzzle according to settings
+        if self.repeat_single:
+            # Initialize fixed puzzle on first reset
+            if self.fixed_puzzle is None:
+                if self.puzzle_index is not None:
+                    try:
+                        idx = int(self.puzzle_index)
+                    except Exception:
+                        idx = 0
+                    idx = max(0, min(idx, len(self.puzzles) - 1))
+                    self.fixed_puzzle = self.puzzles[idx]
+                else:
+                    self.fixed_puzzle = random.choice(self.puzzles)
+            self.current_puzzle = self.fixed_puzzle
+        else:
+            self.current_puzzle = random.choice(self.puzzles)
         
         # Extract training examples
         train = self.current_puzzle['train']
