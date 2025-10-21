@@ -35,7 +35,7 @@ defaults:
     minecraft: {size: [64, 64], break_speed: 100.0, logs: False, length: 36000}
     dmc: {size: [64, 64], repeat: 1, proprio: True, image: True, camera: -1}
     loconav: {size: [64, 64], repeat: 1, camera: -1}
-    arc: {puzzle_dir: './arc-data/', version: 'V2', split: 'training', length: 100, size: 64}
+    arc: {puzzle_dir: './arc-data/', version: 'V2', split: 'training', length: 100, size: 64, num_puzzles: null, specific_puzzle_index: null}
 
   replay:
     size: 5e6
