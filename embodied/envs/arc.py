@@ -99,6 +99,8 @@ class ARC(embodied.Env):
             'pair_5': elements.Space(np.uint8, pair_shape),
             'test_pair': elements.Space(np.uint8, pair_shape),
             'num_valid_pairs': elements.Space(np.int32, (), 0, 5),  # How many of pair_1-5 are real (0-5)
+            'can_copy': elements.Space(bool),  # Whether copy action is still available
+            'can_resize': elements.Space(bool),  # Whether resize action is still available
             'reward': elements.Space(np.float32),
             'is_first': elements.Space(bool),
             'is_last': elements.Space(bool),
@@ -327,6 +329,10 @@ class ARC(embodied.Env):
         
         # Add mask information
         obs['num_valid_pairs'] = np.int32(self.num_valid_pairs)
+        
+        # Add action availability masks
+        obs['can_copy'] = not self.has_copied
+        obs['can_resize'] = not self.has_resized
         
         return obs
     
