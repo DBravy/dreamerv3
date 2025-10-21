@@ -35,7 +35,7 @@ class Agent(embodied.jax.Agent):
     self.act_space = act_space
     self.config = config
 
-    exclude = ('is_first', 'is_last', 'is_terminal', 'reward')
+    exclude = ('is_first', 'is_last', 'is_terminal', 'reward', 'valid_actions')
     enc_space = {k: v for k, v in obs_space.items() if k not in exclude}
     dec_space = {k: v for k, v in obs_space.items() if k not in exclude}
     self.enc = {
@@ -123,6 +123,16 @@ class Agent(embodied.jax.Agent):
     if dec_carry:
       dec_carry, dec_entry, recons = self.dec(dec_carry, feat, reset, **kw)
     policy = self.pol(self.feat2tensor(feat), bdims=1)
+    # Apply action mask to action_type if provided by env as 'valid_actions'
+    if 'valid_actions' in obs:
+      mask = f32(obs['valid_actions'])  # shape (B, 4)
+      # Prevent invalid actions by setting logits to large negative
+      if 'action_type' in policy:
+        logits = policy['action_type'].dist.logits
+        # Replace logits where mask==0 with very negative
+        neg_inf = jnp.full_like(logits, -1e9)
+        masked_logits = jnp.where(mask[..., None] == 1, logits, neg_inf)
+        policy['action_type'].dist.logits = masked_logits
     act = sample(policy)
     out = {}
     out['finite'] = elements.tree.flatdict(jax.tree.map(
