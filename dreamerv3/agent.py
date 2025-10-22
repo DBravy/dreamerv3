@@ -151,33 +151,38 @@ class Agent(embodied.jax.Agent):
 
     # NEW: Apply spatial mask to x and y coordinates
     if 'valid_positions' in obs:
-      spatial_mask = f32(obs['valid_positions'])  # (B, 30, 30)
-      
-      # Mask x coordinate (sum over y dimension)
-      x_mask = jnp.maximum(spatial_mask.sum(axis=2), 1.0)  # (B, 30) - at least one valid y per x
-      x_mask = jnp.minimum(x_mask, 1.0)  # Clip to binary
-      if 'x' in policy:
-        x_dist = policy['x']
-        x_logits = x_dist.dist.logits if hasattr(x_dist, 'dist') else x_dist.logits
-        x_neg_inf = jnp.full_like(x_logits, -1e9)
-        x_masked_logits = jnp.where(x_mask == 1, x_logits, x_neg_inf)
-        if hasattr(x_dist, 'dist'):
-          policy['x'].dist.logits = x_masked_logits
-        else:
-          policy['x'].logits = x_masked_logits
-      
-      # Mask y coordinate (sum over x dimension)
-      y_mask = jnp.maximum(spatial_mask.sum(axis=1), 1.0)  # (B, 30) - at least one valid x per y
-      y_mask = jnp.minimum(y_mask, 1.0)  # Clip to binary
-      if 'y' in policy:
-        y_dist = policy['y']
-        y_logits = y_dist.dist.logits if hasattr(y_dist, 'dist') else y_dist.logits
-        y_neg_inf = jnp.full_like(y_logits, -1e9)
-        y_masked_logits = jnp.where(y_mask == 1, y_logits, y_neg_inf)
-        if hasattr(y_dist, 'dist'):
-          policy['y'].dist.logits = y_masked_logits
-        else:
-          policy['y'].logits = y_masked_logits
+        spatial_mask = f32(obs['valid_positions'])  # (B, 30, 30)
+
+        # For an x (column) to be valid, at least one y (row) in that column must be valid.
+        # Reduce over axis=1 (y) to get a per-x mask of shape (B, 30).
+        x_mask = (spatial_mask.sum(axis=1) > 0).astype(f32)  # (B, 30)
+
+        # For a y (row) to be valid, at least one x (col) in that row must be valid.
+        # Reduce over axis=2 (x) to get a per-y mask of shape (B, 30).
+        y_mask = (spatial_mask.sum(axis=2) > 0).astype(f32)  # (B, 30)
+
+        # Apply to x logits
+        if 'x' in policy:
+            x_dist = policy['x']
+            x_logits = x_dist.dist.logits if hasattr(x_dist, 'dist') else x_dist.logits
+            x_neg_inf = jnp.full_like(x_logits, -1e9)
+            # Broadcast (B,30) over logits shape; works for both Dist and plain logits.
+            x_masked_logits = jnp.where(x_mask == 1.0, x_logits, x_neg_inf)
+            if hasattr(x_dist, 'dist'):
+                policy['x'].dist.logits = x_masked_logits
+            else:
+                policy['x'].logits = x_masked_logits
+
+        # Apply to y logits
+        if 'y' in policy:
+            y_dist = policy['y']
+            y_logits = y_dist.dist.logits if hasattr(y_dist, 'dist') else y_dist.logits
+            y_neg_inf = jnp.full_like(y_logits, -1e9)
+            y_masked_logits = jnp.where(y_mask == 1.0, y_logits, y_neg_inf)
+            if hasattr(y_dist, 'dist'):
+                policy['y'].dist.logits = y_masked_logits
+            else:
+                policy['y'].logits = y_masked_logits
 
     act = sample(policy)
     out = {}
