@@ -52,9 +52,7 @@ def train_eval(
     for key, value in tran.items():
       if value.dtype == np.uint8 and value.ndim == 3:
         if worker == 0:
-          # NOTE: Disabled image stacking to prevent memory accumulation.
-          # Large observations (e.g., ARC: 64x128x3 images) accumulate quickly.
-          pass  # Skipping: episode.add(f'policy_{key}', value, agg='stack')
+          episode.add(f'policy_{key}', value, agg='stack')
       elif key.startswith('log/'):
         assert value.ndim == 0, (key, value.shape, value.dtype)
         episode.add(key + '/avg', value, agg='avg')
