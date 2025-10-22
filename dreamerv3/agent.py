@@ -35,7 +35,7 @@ class Agent(embodied.jax.Agent):
     self.act_space = act_space
     self.config = config
 
-    exclude = ('is_first', 'is_last', 'is_terminal', 'reward', 'valid_actions')
+    exclude = ('is_first', 'is_last', 'is_terminal', 'reward', 'valid_actions', 'valid_positions')
     
     # Encoder sees test_pair (current state) but NOT target_pair (ground truth)
     # The model must learn to predict the correct answer from context alone
@@ -132,7 +132,8 @@ class Agent(embodied.jax.Agent):
     if dec_carry:
       dec_carry, dec_entry, recons = self.dec(dec_carry, feat, reset, **kw)
     policy = self.pol(self.feat2tensor(feat), bdims=1)
-    # Apply action mask to action_type if provided by env as 'valid_actions'
+
+    # Apply action_type mask if provided
     if 'valid_actions' in obs and 'action_type' in policy:
       mask = f32(obs['valid_actions'])  # (B, 4)
       dist = policy['action_type']
@@ -147,6 +148,37 @@ class Agent(embodied.jax.Agent):
         policy['action_type'].dist.logits = masked_logits
       else:
         policy['action_type'].logits = masked_logits
+
+    # NEW: Apply spatial mask to x and y coordinates
+    if 'valid_positions' in obs:
+      spatial_mask = f32(obs['valid_positions'])  # (B, 30, 30)
+      
+      # Mask x coordinate (sum over y dimension)
+      x_mask = jnp.maximum(spatial_mask.sum(axis=2), 1.0)  # (B, 30) - at least one valid y per x
+      x_mask = jnp.minimum(x_mask, 1.0)  # Clip to binary
+      if 'x' in policy:
+        x_dist = policy['x']
+        x_logits = x_dist.dist.logits if hasattr(x_dist, 'dist') else x_dist.logits
+        x_neg_inf = jnp.full_like(x_logits, -1e9)
+        x_masked_logits = jnp.where(x_mask == 1, x_logits, x_neg_inf)
+        if hasattr(x_dist, 'dist'):
+          policy['x'].dist.logits = x_masked_logits
+        else:
+          policy['x'].logits = x_masked_logits
+      
+      # Mask y coordinate (sum over x dimension)
+      y_mask = jnp.maximum(spatial_mask.sum(axis=1), 1.0)  # (B, 30) - at least one valid x per y
+      y_mask = jnp.minimum(y_mask, 1.0)  # Clip to binary
+      if 'y' in policy:
+        y_dist = policy['y']
+        y_logits = y_dist.dist.logits if hasattr(y_dist, 'dist') else y_dist.logits
+        y_neg_inf = jnp.full_like(y_logits, -1e9)
+        y_masked_logits = jnp.where(y_mask == 1, y_logits, y_neg_inf)
+        if hasattr(y_dist, 'dist'):
+          policy['y'].dist.logits = y_masked_logits
+        else:
+          policy['y'].logits = y_masked_logits
+
     act = sample(policy)
     out = {}
     out['finite'] = elements.tree.flatdict(jax.tree.map(

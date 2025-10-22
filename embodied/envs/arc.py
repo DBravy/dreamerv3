@@ -113,7 +113,8 @@ class ARC(embodied.Env):
     def obs_space(self):
         """Define observation space with paired images."""
         pair_shape = (self.size, self.size * 2, 3)  # input|output side-by-side
-        
+
+
         return {
             'pair_1': elements.Space(np.uint8, pair_shape),
             'pair_2': elements.Space(np.uint8, pair_shape),
@@ -128,6 +129,8 @@ class ARC(embodied.Env):
             'is_first': elements.Space(bool),
             'is_last': elements.Space(bool),
             'is_terminal': elements.Space(bool),
+            'valid_actions': elements.Space(np.int32, (4,), 0, 1),  # Mask for [paint, copy, resize, done]
+            'valid_positions': elements.Space(np.int32, (30, 30), 0, 1),  # NEW: Spatial mask for paintable positions
         }
     
     @property
@@ -135,8 +138,8 @@ class ARC(embodied.Env):
         """Define action space for grid editing."""
         return {
             'action_type': elements.Space(np.int32, (), 0, 4),  # 0:paint, 1:copy, 2:resize, 3:done
-            'x': elements.Space(np.int32, (), 0, 29),
-            'y': elements.Space(np.int32, (), 0, 29),
+            'x': elements.Space(np.int32, (), 0, 30),
+            'y': elements.Space(np.int32, (), 0, 30),
             'color': elements.Space(np.int32, (), 0, 9),
             'width': elements.Space(np.int32, (), 0, 30),   # Target width for resize
             'height': elements.Space(np.int32, (), 0, 30),  # Target height for resize
@@ -259,23 +262,24 @@ class ARC(embodied.Env):
     
     def _execute_action(self, action):
         """Modify the current_output grid based on action."""
-        action_type = action['action_type']
-        x, y = int(action['x']), int(action['y'])
+        # Convert all action values to Python integers at the start
+        action_type = int(action['action_type'])
+        x = int(action['x'])
+        y = int(action['y'])
         
         # Assume action is valid until proven otherwise
         self.last_action_valid = True
         
         if action_type == 0:  # Paint
-            h, w = self.current_output.shape
-            
             # Check if position is out of bounds
-            if not (0 <= x < h and 0 <= y < w):
+            h, w = self.current_output.shape
+            if x >= w or y >= h or x < 0 or y < 0:
                 self.last_action_valid = False
                 self.invalid_action_count += 1
                 self.invalid_action_types['paint_oob'] += 1
                 return
             
-            # Check if this position has already been painted
+            # NEW: Check if position already painted
             if (x, y) in self.painted_positions:
                 self.last_action_valid = False
                 self.invalid_action_count += 1
@@ -283,8 +287,8 @@ class ARC(embodied.Env):
                 return
             
             # Valid paint action - execute it
-            color = action['color']
-            self.current_output[x, y] = color
+            color = int(action['color'])
+            self.current_output[y, x] = color  # NumPy arrays are [row, col] = [y, x]
             self.painted_positions.add((x, y))
         
         elif action_type == 1:  # Copy entire input
@@ -397,6 +401,7 @@ class ARC(embodied.Env):
         
         # Add mask information
         obs['num_valid_pairs'] = np.int32(self.num_valid_pairs)
+
         # Action availability mask: [paint, copy, resize, done]
         obs['valid_actions'] = np.array([
             1,                          # paint always allowed
@@ -404,6 +409,13 @@ class ARC(embodied.Env):
             0 if self.has_resized else 1,
             1,                          # done always allowed
         ], dtype=np.int32)
+
+        # NEW: Spatial mask for valid paint positions
+        valid_positions = np.ones((30, 30), dtype=np.int32)
+        for x, y in self.painted_positions:
+            if 0 <= x < 30 and 0 <= y < 30:
+                valid_positions[x, y] = 0
+        obs['valid_positions'] = valid_positions
         
         return obs
     
