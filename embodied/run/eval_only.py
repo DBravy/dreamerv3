@@ -33,7 +33,9 @@ def eval_only(make_agent, make_env, make_logger, args):
     for key, value in tran.items():
       isimage = (value.dtype == np.uint8) and (value.ndim == 3)
       if isimage and worker == 0:
-        episode.add(f'policy_{key}', value, agg='stack')
+        # NOTE: Disabled image stacking to prevent memory accumulation.
+        # Large observations (e.g., ARC: 64x128x3 images) accumulate quickly.
+        pass  # Skipping: episode.add(f'policy_{key}', value, agg='stack')
       elif key.startswith('log/'):
         assert value.ndim == 0, (key, value.shape, value.dtype)
         episode.add(key + '/avg', value, agg='avg')
