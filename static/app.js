@@ -2,6 +2,7 @@
 let isTraining = false;
 let updateInterval = null;
 let charts = {};
+let isGridsPaused = false;
 
 // ARC color palette (matches Python COLOR_MAP in arc.py)
 const ARC_COLORS = {
@@ -553,8 +554,12 @@ function createActionList(actions) {
 }
 
 // Fetch and update grid visualization
-// Fetch and update grid visualization
 async function updateGridVisualization() {
+    // Don't update if paused
+    if (isGridsPaused) {
+        return;
+    }
+    
     try {
         const response = await fetch('/api/grids');
         const result = await response.json();
@@ -726,6 +731,21 @@ function toggleActionsView() {
     }
 }
 
+// Toggle pause state for grid visualization
+function toggleGridsPause() {
+    isGridsPaused = !isGridsPaused;
+    const btn = document.getElementById('pause-grids-btn');
+    const text = document.getElementById('pause-grids-text');
+    
+    if (isGridsPaused) {
+        text.textContent = '▶️ Resume Updates';
+        btn.style.background = '#10b981'; // Green for resume
+    } else {
+        text.textContent = '⏸️ Pause Updates';
+        btn.style.background = '#6b7280'; // Gray for pause
+    }
+}
+
 // Event listeners
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize charts
@@ -735,6 +755,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('start-btn').addEventListener('click', startTraining);
     document.getElementById('stop-btn').addEventListener('click', stopTraining);
     document.getElementById('clear-btn').addEventListener('click', clearMetrics);
+    document.getElementById('pause-grids-btn').addEventListener('click', toggleGridsPause);
 
     // Update window size when changed
     document.getElementById('window-size').addEventListener('change', updateMetrics);

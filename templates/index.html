@@ -105,7 +105,14 @@
 
         <div class="grids-visualization">
             <div class="grids-card">
-                <h3>🎯 Latest Episode Reconstruction</h3>
+                <div class="console-header">
+                    <h3>🎯 Latest Episode Reconstruction</h3>
+                    <div class="console-controls">
+                        <button id="pause-grids-btn" class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.9em;">
+                            <span id="pause-grids-text">⏸️ Pause Updates</span>
+                        </button>
+                    </div>
+                </div>
                 <div id="grids-container" class="grids-content">
                     <div class="grids-empty">
                         Start training to see episode reconstructions...
@@ -151,4 +158,3 @@
     <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
-
