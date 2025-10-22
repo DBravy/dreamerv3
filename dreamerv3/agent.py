@@ -301,27 +301,28 @@ class Agent(embodied.jax.Agent):
         dec_carry, imgfeat, jnp.zeros_like(secondhalf(obs['is_first'])),
         training=False)
 
-    # Video preds
-    for key in self.dec.imgkeys:
-      assert obs[key].dtype == jnp.uint8
-      true = obs[key][:RB]
-      pred = jnp.concatenate([obsrecons[key].pred(), imgrecons[key].pred()], 1)
-      pred = jnp.clip(pred * 255, 0, 255).astype(jnp.uint8)
-      error = ((i32(pred) - i32(true) + 255) / 2).astype(np.uint8)
-      video = jnp.concatenate([true, pred, error], 2)
+    # Video preds (only in debug mode to avoid memory leak)
+    if self.config.debug:
+      for key in self.dec.imgkeys:
+        assert obs[key].dtype == jnp.uint8
+        true = obs[key][:RB]
+        pred = jnp.concatenate([obsrecons[key].pred(), imgrecons[key].pred()], 1)
+        pred = jnp.clip(pred * 255, 0, 255).astype(jnp.uint8)
+        error = ((i32(pred) - i32(true) + 255) / 2).astype(np.uint8)
+        video = jnp.concatenate([true, pred, error], 2)
 
-      video = jnp.pad(video, [[0, 0], [0, 0], [2, 2], [2, 2], [0, 0]])
-      mask = jnp.zeros(video.shape, bool).at[:, :, 2:-2, 2:-2, :].set(True)
-      # Create border with the actual video time dimension
-      VT = video.shape[1]  # Use video's actual time dimension
-      border = jnp.full((VT, 3), jnp.array([0, 255, 0]), jnp.uint8)
-      border = border.at[VT // 2:].set(jnp.array([255, 0, 0], jnp.uint8))
-      video = jnp.where(mask, video, border[None, :, None, None, :])
-      video = jnp.concatenate([video, 0 * video[:, :10]], 1)
+        video = jnp.pad(video, [[0, 0], [0, 0], [2, 2], [2, 2], [0, 0]])
+        mask = jnp.zeros(video.shape, bool).at[:, :, 2:-2, 2:-2, :].set(True)
+        # Create border with the actual video time dimension
+        VT = video.shape[1]  # Use video's actual time dimension
+        border = jnp.full((VT, 3), jnp.array([0, 255, 0]), jnp.uint8)
+        border = border.at[VT // 2:].set(jnp.array([255, 0, 0], jnp.uint8))
+        video = jnp.where(mask, video, border[None, :, None, None, :])
+        video = jnp.concatenate([video, 0 * video[:, :10]], 1)
 
-      B, T, H, W, C = video.shape
-      grid = video.transpose((1, 2, 0, 3, 4)).reshape((T, H, B * W, C))
-      metrics[f'openloop/{key}'] = grid
+        B, T, H, W, C = video.shape
+        grid = video.transpose((1, 2, 0, 3, 4)).reshape((T, H, B * W, C))
+        metrics[f'openloop/{key}'] = grid
 
     carry = (*new_carry, {k: data[k][:, -1] for k in self.act_space})
     return carry, metrics
