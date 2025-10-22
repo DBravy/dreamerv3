@@ -130,7 +130,7 @@ class ARC(embodied.Env):
             'is_last': elements.Space(bool),
             'is_terminal': elements.Space(bool),
             'valid_actions': elements.Space(np.int32, (4,), 0, 1),  # Mask for [paint, copy, resize, done]
-            'valid_positions': elements.Space(np.int32, (30, 30), 0, 1),  # NEW: Spatial mask for paintable positions
+            'valid_positions': elements.Space(np.int32, (30, 30), 0, 1),  # Spatial mask [y, x] for paintable positions (1=valid, 0=invalid/painted/out-of-bounds)
         }
     
     @property
@@ -383,7 +383,19 @@ class ARC(embodied.Env):
         return float(reward)
     
     def _get_observation(self):
-        """Generate observation dict with all paired images."""
+        """
+        Generate observation dict with all paired images.
+        
+        Action masking system:
+        - valid_actions: [4] array masking action types [paint, copy, resize, done]
+          - paint and done are always available (1)
+          - copy and resize can only be used once per episode (0 after use)
+        - valid_positions: [30, 30] array masking spatial positions for painting
+          - 1 = valid position (inside grid boundaries AND not yet painted)
+          - 0 = invalid position (outside grid boundaries OR already painted)
+          - Coordinates are [y, x] = [row, col] to match NumPy convention
+          - Updates dynamically when grid is resized
+        """
         obs = {}
         
         # Create training pairs
@@ -411,10 +423,21 @@ class ARC(embodied.Env):
         ], dtype=np.int32)
 
         # NEW: Spatial mask for valid paint positions
-        valid_positions = np.ones((30, 30), dtype=np.int32)
-        for x, y in self.painted_positions:
-            if 0 <= x < 30 and 0 <= y < 30:
-                valid_positions[x, y] = 0
+        # Start with all positions marked as invalid (0)
+        valid_positions = np.zeros((30, 30), dtype=np.int32)
+        
+        # Get current grid dimensions
+        current_h, current_w = self.current_output.shape
+        
+        # Mark positions within the current grid boundaries as valid (1)
+        # Only if they haven't been painted yet
+        # Note: painted_positions stores (x, y) where x=col, y=row
+        # valid_positions is indexed as [row, col] = [y, x] to match NumPy convention
+        for y in range(min(current_h, 30)):  # rows
+            for x in range(min(current_w, 30)):  # cols
+                if (x, y) not in self.painted_positions:
+                    valid_positions[y, x] = 1
+        
         obs['valid_positions'] = valid_positions
         
         return obs
