@@ -120,7 +120,8 @@ class ARC(embodied.Env):
             'pair_3': elements.Space(np.uint8, pair_shape),
             'pair_4': elements.Space(np.uint8, pair_shape),
             'pair_5': elements.Space(np.uint8, pair_shape),
-            'test_pair': elements.Space(np.uint8, pair_shape),
+            'test_pair': elements.Space(np.uint8, pair_shape),  # test_input | current_work (for policy to see current state)
+            'target_pair': elements.Space(np.uint8, pair_shape),  # test_input | ground_truth (for world model to learn complete solution)
             'num_valid_pairs': elements.Space(np.int32, (), 0, 5),  # How many of pair_1-5 are real (0-5)
             'valid_actions': elements.Space(np.int32, (4,), 0, 1),  # Mask for [paint, copy, resize, done]
             'reward': elements.Space(np.float32),
@@ -386,9 +387,13 @@ class ARC(embodied.Env):
             pair = self._make_pair(self.train_inputs[i], self.train_outputs[i])
             obs[f'pair_{i+1}'] = pair
         
-        # Create test pair (input | current work)
+        # Create test pair (input | current work) - for policy to see current state
         test_pair = self._make_pair(self.test_input, self.current_output)
         obs['test_pair'] = test_pair
+        
+        # Create target pair (input | ground truth) - for world model to learn complete solution
+        target_pair = self._make_pair(self.test_input, self.test_output)
+        obs['target_pair'] = target_pair
         
         # Add mask information
         obs['num_valid_pairs'] = np.int32(self.num_valid_pairs)

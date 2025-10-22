@@ -36,8 +36,14 @@ class Agent(embodied.jax.Agent):
     self.config = config
 
     exclude = ('is_first', 'is_last', 'is_terminal', 'reward', 'valid_actions')
+    
+    # Encoder sees everything (including current state for context)
     enc_space = {k: v for k, v in obs_space.items() if k not in exclude}
-    dec_space = {k: v for k, v in obs_space.items() if k not in exclude}
+    
+    # Decoder reconstructs target_pair (complete solution) but NOT test_pair (current state)
+    # This makes the world model learn to predict the complete solution at every step
+    dec_space = {k: v for k, v in obs_space.items() if k not in exclude and k != 'test_pair'}
+    
     self.enc = {
         'simple': rssm.Encoder,
     }[config.enc.typ](enc_space, **config.enc[config.enc.typ], name='enc')
