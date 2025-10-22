@@ -23,7 +23,7 @@ class ARC(embodied.Env):
         9: [135, 12, 37],       # Maroon
     }
     
-    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=100, size=64, max_puzzles=None, repeat_single=False, puzzle_index=None):
+    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=100, size=64, max_puzzles=None, repeat_single=False, puzzle_index=None, invalid_penalty=0.1):
         """
         Args:
             task: Not used, but required by interface
@@ -35,6 +35,7 @@ class ARC(embodied.Env):
             max_puzzles: If set, limit the number of loaded puzzles to this many (use first N)
             repeat_single: If True, select a single puzzle on first reset and repeat it every episode
             puzzle_index: Optional explicit index into the loaded puzzles to always use (overrides random)
+            invalid_penalty: Penalty for invalid actions (default: 0.1)
         """
         self.puzzle_dir = puzzle_dir
         self.version = version
@@ -44,6 +45,7 @@ class ARC(embodied.Env):
         self.max_puzzles = max_puzzles
         self.repeat_single = repeat_single
         self.puzzle_index = puzzle_index
+        self.invalid_penalty = invalid_penalty
         
         # Construct the full path to puzzles
         self.full_puzzle_path = f"{puzzle_dir}/{version}/data/{split}"
@@ -52,7 +54,7 @@ class ARC(embodied.Env):
         if len(self.puzzles) == 0:
             raise ValueError(f"No puzzles found in {self.full_puzzle_path}. Please check the path.")
         
-        print(f"Loaded {len(self.puzzles)} ARC puzzles from {self.full_puzzle_path} ({version}/{split}); max_puzzles={self.max_puzzles}, repeat_single={self.repeat_single}, puzzle_index={self.puzzle_index}")
+        print(f"Loaded {len(self.puzzles)} ARC puzzles from {self.full_puzzle_path} ({version}/{split}); max_puzzles={self.max_puzzles}, repeat_single={self.repeat_single}, puzzle_index={self.puzzle_index}, invalid_penalty={self.invalid_penalty}")
         
         # Current episode state
         self.current_puzzle = None
@@ -75,6 +77,11 @@ class ARC(embodied.Env):
         self.has_resized = False
         self.painted_positions = set()  # Set of (x, y) tuples
         self.fixed_puzzle = None  # When repeat_single is True, hold onto the chosen puzzle
+        
+        # NEW: Track action validity
+        self.last_action_valid = True
+        self.invalid_action_count = 0
+        self.invalid_action_types = {'paint_duplicate': 0, 'copy_duplicate': 0, 'resize_duplicate': 0, 'paint_oob': 0}
     
     def _load_puzzles(self):
         """Load ARC JSON files from the specified version and split directory."""
@@ -153,11 +160,11 @@ class ARC(embodied.Env):
         }
         self.action_history.append(action_record)
         
-        # Execute action on the grid
+        # Execute action on the grid (this sets self.last_action_valid)
         self._execute_action(action)
         self.step_count += 1
         
-        # Calculate reward
+        # Calculate reward (includes penalty for invalid actions)
         reward = self._calculate_reward()
         
         # Check if done
@@ -203,40 +210,42 @@ class ARC(embodied.Env):
             self.current_puzzle = random.choice(self.puzzles)
         
         # Extract training examples
-        train = self.current_puzzle['train']
-        self.train_inputs = [np.array(ex['input'], dtype=np.uint8) for ex in train]
-        self.train_outputs = [np.array(ex['output'], dtype=np.uint8) for ex in train]
+        train_pairs = self.current_puzzle['train']
         
-        # Store the actual number of examples (before padding)
-        self.num_valid_pairs = min(len(self.train_inputs), 5)
+        # Pad training pairs to exactly 5 (ARC has varying amounts)
+        self.train_inputs = []
+        self.train_outputs = []
+        for i in range(5):
+            if i < len(train_pairs):
+                inp = np.array(train_pairs[i]['input'], dtype=np.uint8)
+                out = np.array(train_pairs[i]['output'], dtype=np.uint8)
+            else:
+                # Use empty placeholder
+                inp = np.zeros((1, 1), dtype=np.uint8)
+                out = np.zeros((1, 1), dtype=np.uint8)
+            self.train_inputs.append(inp)
+            self.train_outputs.append(out)
+        self.num_valid_pairs = min(len(train_pairs), 5)
         
-        # Zero-pad to always have 5 examples
-        while len(self.train_inputs) < 5:
-            # Create blank grids (use first example's shape as reference)
-            blank = np.zeros_like(self.train_inputs[0])
-            self.train_inputs.append(blank)
-            self.train_outputs.append(blank)
+        # Extract test case (always use the first test case)
+        test_pair = self.current_puzzle['test'][0]
+        self.test_input = np.array(test_pair['input'], dtype=np.uint8)
+        self.test_output = np.array(test_pair['output'], dtype=np.uint8)
         
-        # Take only first 5 if more
-        self.train_inputs = self.train_inputs[:5]
-        self.train_outputs = self.train_outputs[:5]
+        # Initialize current output as empty grid (same size as test input)
+        self.current_output = np.zeros_like(self.test_input)
         
-        # Get test case (use first test example)
-        test = self.current_puzzle['test'][0]
-        self.test_input = np.array(test['input'], dtype=np.uint8)
-        self.test_output = np.array(test['output'], dtype=np.uint8)
-        
-        # Initialize blank 3x3 working grid
-        self.current_output = np.zeros((3, 3), dtype=np.uint8)
+        # Reset episode state
         self.step_count = 0
-        
-        # Clear action history for new episode
         self.action_history = []
-        
-        # Reset action tracking to allow all actions in new episode
         self.has_copied = False
         self.has_resized = False
         self.painted_positions = set()
+        
+        # NEW: Reset validity tracking
+        self.last_action_valid = True
+        self.invalid_action_count = 0
+        self.invalid_action_types = {'paint_duplicate': 0, 'copy_duplicate': 0, 'resize_duplicate': 0, 'paint_oob': 0}
         
         # Return initial observation
         obs = self._get_observation()
@@ -252,35 +261,52 @@ class ARC(embodied.Env):
         action_type = action['action_type']
         x, y = int(action['x']), int(action['y'])
         
+        # Assume action is valid until proven otherwise
+        self.last_action_valid = True
+        
         if action_type == 0:  # Paint
             h, w = self.current_output.shape
-            if 0 <= x < h and 0 <= y < w:
-                # Check if this position has already been painted
-                if (x, y) in self.painted_positions:
-                    # Skip this action - position already painted
-                    return
-                
-                # Paint the cell and mark it as painted
-                color = action['color']
-                self.current_output[x, y] = color
-                self.painted_positions.add((x, y))
+            
+            # Check if position is out of bounds
+            if not (0 <= x < h and 0 <= y < w):
+                self.last_action_valid = False
+                self.invalid_action_count += 1
+                self.invalid_action_types['paint_oob'] += 1
+                return
+            
+            # Check if this position has already been painted
+            if (x, y) in self.painted_positions:
+                self.last_action_valid = False
+                self.invalid_action_count += 1
+                self.invalid_action_types['paint_duplicate'] += 1
+                return
+            
+            # Valid paint action - execute it
+            color = action['color']
+            self.current_output[x, y] = color
+            self.painted_positions.add((x, y))
         
         elif action_type == 1:  # Copy entire input
             # Check if copy has already been used
             if self.has_copied:
-                # Skip this action - already copied once
+                self.last_action_valid = False
+                self.invalid_action_count += 1
+                self.invalid_action_types['copy_duplicate'] += 1
                 return
             
-            # Perform copy and mark as used
+            # Valid copy action - execute it
             self.current_output = self.test_input.copy()
             self.has_copied = True
         
         elif action_type == 2:  # Resize
             # Check if resize has already been used
             if self.has_resized:
-                # Skip this action - already resized once
+                self.last_action_valid = False
+                self.invalid_action_count += 1
+                self.invalid_action_types['resize_duplicate'] += 1
                 return
             
+            # Valid resize action - execute it
             # Clip to valid range [1, 30], treating 0 as 1
             new_height = int(np.clip(action['height'], 1, 30))
             new_width = int(np.clip(action['width'], 1, 30))
@@ -302,7 +328,7 @@ class ARC(embodied.Env):
             # This allows repainting at the same coordinates in the new grid size.
             self.painted_positions.clear()
         
-        # action_type == 3 is "done", no grid modification
+        # action_type == 3 is "done", no grid modification (always valid)
     
     def _calculate_reward(self):
         """
@@ -312,6 +338,7 @@ class ARC(embodied.Env):
         1. Size accuracy: Reward for getting closer to correct dimensions
         2. Content accuracy: Percentage of correct cells (in overlapping region)
         3. Bonus: Extra reward for exact size match
+        4. NEW: Penalty for invalid actions
         """
         target_h, target_w = self.test_output.shape
         current_h, current_w = self.current_output.shape
@@ -342,8 +369,11 @@ class ARC(embodied.Env):
         # Component 3: Exact size bonus (0 or 0.1)
         exact_size_bonus = 0.1 if (current_h == target_h and current_w == target_w) else 0.0
         
+        # Component 4: Invalid action penalty (NEW)
+        invalid_penalty = -self.invalid_penalty if not self.last_action_valid else 0.0
+        
         # Total reward
-        reward = size_accuracy + content_accuracy + exact_size_bonus
+        reward = size_accuracy + content_accuracy + exact_size_bonus + invalid_penalty
         
         return float(reward)
     
@@ -423,6 +453,10 @@ class ARC(embodied.Env):
             'final_reward': float(final_reward),
             'steps': int(self.step_count),
             'actions': self.action_history,  # Complete action history
+            # NEW: Invalid action statistics
+            'invalid_action_count': int(self.invalid_action_count),
+            'invalid_action_types': self.invalid_action_types,
+            'invalid_action_rate': float(self.invalid_action_count / max(1, self.step_count)),
         }
         
         # Write to a fixed file for web app to read
