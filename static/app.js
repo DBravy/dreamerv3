@@ -553,6 +553,7 @@ function createActionList(actions) {
 }
 
 // Fetch and update grid visualization
+// Fetch and update grid visualization
 async function updateGridVisualization() {
     try {
         const response = await fetch('/api/grids');
@@ -567,6 +568,10 @@ async function updateGridVisualization() {
         
         if (result.status === 'success' && result.data) {
             const data = result.data;
+            
+            // SAVE SCROLL POSITION before clearing
+            const actionsContent = document.getElementById('actions-content');
+            const savedScrollTop = actionsContent ? actionsContent.scrollTop : 0;
             
             // Clear container
             gridsContainer.innerHTML = '';
@@ -681,6 +686,14 @@ async function updateGridVisualization() {
                 actionsSection.appendChild(actionsHeader);
                 actionsSection.appendChild(actionsContent);
                 gridsContainer.appendChild(actionsSection);
+                
+                // RESTORE SCROLL POSITION after the element is in the DOM
+                setTimeout(() => {
+                    const newActionsContent = document.getElementById('actions-content');
+                    if (newActionsContent && savedScrollTop > 0) {
+                        newActionsContent.scrollTop = savedScrollTop;
+                    }
+                }, 0);
             }
         }
     } catch (error) {
