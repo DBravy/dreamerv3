@@ -15,6 +15,9 @@ import numpy as np
 import portal
 import ruamel.yaml as yaml
 
+# Import trial-and-error wrapper
+from .trial_error_wrapper import TrialErrorWrapper, SimpleTrialErrorWrapper
+
 
 def main(argv=None):
   from .agent import Agent
@@ -249,6 +252,25 @@ def make_env(config, index, **overrides):
 
 
 def wrap_env(env, config):
+  # Apply trial-error wrapper for ARC tasks (tries actions until rewarded)
+  if config.task.startswith('arc_'):
+    # Choose which wrapper to use:
+    # - TrialErrorWrapper: Automatically perturbs actions until one succeeds
+    # - SimpleTrialErrorWrapper: Reverts failed actions and lets agent retry
+    
+    if config.env.get('arc', {}).get('use_trial_error', False):
+      wrapper_type = config.env.get('arc', {}).get('trial_error_type', 'simple')
+      
+      if wrapper_type == 'auto':
+        # Automatic perturbation wrapper
+        max_attempts = config.env.get('arc', {}).get('max_attempts', 10)
+        reward_threshold = config.env.get('arc', {}).get('reward_threshold', 0.01)
+        env = TrialErrorWrapper(env, max_attempts, reward_threshold)
+      else:
+        # Simple revert wrapper (default)
+        min_improvement = config.env.get('arc', {}).get('min_reward_improvement', 0.001)
+        env = SimpleTrialErrorWrapper(env, min_improvement)
+  
   for name, space in env.act_space.items():
     if not space.discrete:
       env = embodied.wrappers.NormalizeAction(env, name)
