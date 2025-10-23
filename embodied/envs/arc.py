@@ -135,24 +135,39 @@ class ARC(embodied.Env):
             self.min_target_width is None and self.max_target_width is None):
             return True
         
-        # Check the first test case's output dimensions
-        # (We use the test output as the target grid to match)
         try:
-            test_output = puzzle['test'][0]['output']
-            height = len(test_output)
-            width = len(test_output[0]) if height > 0 else 0
+            # Check ALL grids in the puzzle (training pairs and test)
+            grids_to_check = []
             
-            # Check height constraints
-            if self.min_target_height is not None and height < self.min_target_height:
-                return False
-            if self.max_target_height is not None and height > self.max_target_height:
-                return False
+            # Add all training pair inputs and outputs
+            for train_pair in puzzle.get('train', []):
+                grids_to_check.append(train_pair.get('input'))
+                grids_to_check.append(train_pair.get('output'))
             
-            # Check width constraints
-            if self.min_target_width is not None and width < self.min_target_width:
-                return False
-            if self.max_target_width is not None and width > self.max_target_width:
-                return False
+            # Add test input and output (first test case)
+            if 'test' in puzzle and len(puzzle['test']) > 0:
+                grids_to_check.append(puzzle['test'][0].get('input'))
+                grids_to_check.append(puzzle['test'][0].get('output'))
+            
+            # Check each grid against the filters
+            for grid in grids_to_check:
+                if grid is None:
+                    continue
+                
+                height = len(grid)
+                width = len(grid[0]) if height > 0 else 0
+                
+                # Check height constraints
+                if self.min_target_height is not None and height < self.min_target_height:
+                    return False
+                if self.max_target_height is not None and height > self.max_target_height:
+                    return False
+                
+                # Check width constraints
+                if self.min_target_width is not None and width < self.min_target_width:
+                    return False
+                if self.max_target_width is not None and width > self.max_target_width:
+                    return False
             
             return True
         except (KeyError, IndexError, TypeError):
