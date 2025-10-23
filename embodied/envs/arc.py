@@ -342,8 +342,10 @@ class ARC(embodied.Env):
         Reward components:
         1. Size accuracy: Reward for getting closer to correct dimensions
         2. Content accuracy: Percentage of correct cells (in overlapping region)
+           - Full credit for correct position + correct color
+           - Partial credit (40%) for correct color in wrong position
         3. Bonus: Extra reward for exact size match
-        4. NEW: Penalty for invalid actions
+        4. Penalty for invalid actions
         """
         target_h, target_w = self.test_output.shape
         current_h, current_w = self.current_output.shape
@@ -362,19 +364,40 @@ class ARC(embodied.Env):
         min_w = min(current_w, target_w)
         
         if min_h > 0 and min_w > 0:
+            # Full credit: correct position AND correct color
             overlap_correct = (
                 self.current_output[:min_h, :min_w] == 
                 self.test_output[:min_h, :min_w]
             ).sum()
-            # Normalize by target size (not overlap size) to penalize wrong dimensions
-            content_accuracy = (overlap_correct / self.test_output.size) * 0.6
+            
+            # Partial credit: correct color but wrong position
+            # Count how many of each color appear in both grids
+            current_overlap = self.current_output[:min_h, :min_w]
+            target_overlap = self.test_output[:min_h, :min_w]
+            
+            # For each color, find the minimum count between current and target
+            # This gives us the maximum number of correct color matches possible
+            color_matches = 0
+            for color in range(10):  # Colors 0-9
+                current_count = (current_overlap == color).sum()
+                target_count = (target_overlap == color).sum()
+                color_matches += min(current_count, target_count)
+            
+            # Subtract the exact matches to get wrong-position matches
+            wrong_position_matches = color_matches - overlap_correct
+            
+            # Reward: full credit for exact matches, 40% credit for color-only matches
+            # This keeps total content accuracy in range 0 to 0.6
+            exact_match_reward = (overlap_correct / self.test_output.size) * 0.6
+            color_match_reward = (wrong_position_matches / self.test_output.size) * 0.6 * 0.4
+            content_accuracy = exact_match_reward + color_match_reward
         else:
             content_accuracy = 0.0
         
         # Component 3: Exact size bonus (0 or 0.1)
         exact_size_bonus = 0.1 if (current_h == target_h and current_w == target_w) else 0.0
         
-        # Component 4: Invalid action penalty (NEW)
+        # Component 4: Invalid action penalty
         invalid_penalty = -self.invalid_penalty if not self.last_action_valid else 0.0
         
         # Total reward
