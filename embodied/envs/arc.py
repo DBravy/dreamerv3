@@ -50,10 +50,12 @@ class ARC(embodied.Env):
         self.repeat_single = repeat_single
         self.puzzle_index = puzzle_index
         self.invalid_penalty = invalid_penalty
-        self.min_target_height = min_target_height
-        self.max_target_height = max_target_height
-        self.min_target_width = min_target_width
-        self.max_target_width = max_target_width
+        
+        # Convert 0 or negative values to None (meaning no filter)
+        self.min_target_height = min_target_height if (min_target_height and min_target_height > 0) else None
+        self.max_target_height = max_target_height if (max_target_height and max_target_height > 0) else None
+        self.min_target_width = min_target_width if (min_target_width and min_target_width > 0) else None
+        self.max_target_width = max_target_width if (max_target_width and max_target_width > 0) else None
         
         # Construct the full path to puzzles
         self.full_puzzle_path = f"{puzzle_dir}/{version}/data/{split}"
