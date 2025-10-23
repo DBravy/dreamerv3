@@ -36,10 +36,10 @@ class ARC(embodied.Env):
             repeat_single: If True, select a single puzzle on first reset and repeat it every episode
             puzzle_index: Optional explicit index into the loaded puzzles to always use (overrides random)
             invalid_penalty: Penalty for invalid actions (default: 0.1)
-            min_target_height: Optional minimum height for target output grids (filters puzzles)
-            max_target_height: Optional maximum height for target output grids (filters puzzles)
-            min_target_width: Optional minimum width for target output grids (filters puzzles)
-            max_target_width: Optional maximum width for target output grids (filters puzzles)
+            min_target_height: Optional minimum height for all grids in puzzle (filters puzzles)
+            max_target_height: Optional maximum height for all grids in puzzle (filters puzzles)
+            min_target_width: Optional minimum width for all grids in puzzle (filters puzzles)
+            max_target_width: Optional maximum width for all grids in puzzle (filters puzzles)
         """
         self.puzzle_dir = puzzle_dir
         self.version = version
@@ -66,9 +66,9 @@ class ARC(embodied.Env):
         
         filter_info = []
         if self.min_target_height is not None or self.max_target_height is not None:
-            filter_info.append(f"target_height={self.min_target_height or 0}-{self.max_target_height or '∞'}")
+            filter_info.append(f"height={self.min_target_height or 0}-{self.max_target_height or '∞'}")
         if self.min_target_width is not None or self.max_target_width is not None:
-            filter_info.append(f"target_width={self.min_target_width or 0}-{self.max_target_width or '∞'}")
+            filter_info.append(f"width={self.min_target_width or 0}-{self.max_target_width or '∞'}")
         filter_str = f", filters=[{', '.join(filter_info)}]" if filter_info else ""
         
         print(f"Loaded {len(self.puzzles)} ARC puzzles from {self.full_puzzle_path} ({version}/{split}); max_puzzles={self.max_puzzles}, repeat_single={self.repeat_single}, puzzle_index={self.puzzle_index}, invalid_penalty={self.invalid_penalty}{filter_str}")
