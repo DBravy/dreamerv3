@@ -23,7 +23,7 @@ class ARC(embodied.Env):
         9: [135, 12, 37],       # Maroon
     }
     
-    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=100, size=64, max_puzzles=None, repeat_single=False, puzzle_index=None, invalid_penalty=0.1, min_target_height=None, max_target_height=None, min_target_width=None, max_target_width=None):
+    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=50, size=64, max_puzzles=None, repeat_single=False, puzzle_index=None, invalid_penalty=0.1, min_target_height=None, max_target_height=None, min_target_width=None, max_target_width=None):
         """
         Args:
             task: Not used, but required by interface
@@ -90,7 +90,6 @@ class ARC(embodied.Env):
         self.action_history = []
         
         # Track which actions have been used to prevent repeats
-        self.has_copied = False
         self.has_resized = False
         self.painted_positions = set()  # Set of (x, y) tuples
         self.fixed_puzzle = None  # When repeat_single is True, hold onto the chosen puzzle
@@ -98,7 +97,7 @@ class ARC(embodied.Env):
         # NEW: Track action validity
         self.last_action_valid = True
         self.invalid_action_count = 0
-        self.invalid_action_types = {'paint_duplicate': 0, 'copy_duplicate': 0, 'resize_duplicate': 0, 'paint_oob': 0}
+        self.invalid_action_types = {'paint_duplicate': 0, 'resize_duplicate': 0, 'paint_oob': 0}
     
     def _load_puzzles(self):
         """Load ARC JSON files from the specified version and split directory."""
@@ -189,12 +188,11 @@ class ARC(embodied.Env):
             'test_pair': elements.Space(np.uint8, pair_shape),  # test_input | current_work (for policy to see current state)
             'target_pair': elements.Space(np.uint8, pair_shape),  # test_input | ground_truth (for world model to learn complete solution)
             'num_valid_pairs': elements.Space(np.int32, (), 0, 5),  # How many of pair_1-5 are real (0-5)
-            'valid_actions': elements.Space(np.int32, (4,), 0, 1),  # Mask for [paint, copy, resize, done]
+            'valid_actions': elements.Space(np.int32, (3,), 0, 1),  # Mask for [paint, resize, done]
             'reward': elements.Space(np.float32),
             'is_first': elements.Space(bool),
             'is_last': elements.Space(bool),
             'is_terminal': elements.Space(bool),
-            'valid_actions': elements.Space(np.int32, (4,), 0, 1),  # Mask for [paint, copy, resize, done]
             'valid_positions': elements.Space(np.int32, (30, 30), 0, 1),  # Spatial mask [y, x] for paintable positions (1=valid, 0=invalid/painted/out-of-bounds)
         }
     
@@ -202,7 +200,7 @@ class ARC(embodied.Env):
     def act_space(self):
         """Define action space for grid editing."""
         return {
-            'action_type': elements.Space(np.int32, (), 0, 4),  # 0:paint, 1:copy, 2:resize, 3:done
+            'action_type': elements.Space(np.int32, (), 0, 3),  # 0:paint, 1:resize, 2:done
             'x': elements.Space(np.int32, (), 0, 30),
             'y': elements.Space(np.int32, (), 0, 30),
             'color': elements.Space(np.int32, (), 0, 9),
@@ -238,7 +236,7 @@ class ARC(embodied.Env):
         
         # Check if done
         is_done = (
-            action['action_type'] == 3 or  # "done" action
+            action['action_type'] == 2 or  # "done" action
             self.step_count >= self.length
         )
         
@@ -307,14 +305,13 @@ class ARC(embodied.Env):
         # Reset episode state
         self.step_count = 0
         self.action_history = []
-        self.has_copied = False
         self.has_resized = False
         self.painted_positions = set()
         
         # NEW: Reset validity tracking
         self.last_action_valid = True
         self.invalid_action_count = 0
-        self.invalid_action_types = {'paint_duplicate': 0, 'copy_duplicate': 0, 'resize_duplicate': 0, 'paint_oob': 0}
+        self.invalid_action_types = {'paint_duplicate': 0, 'resize_duplicate': 0, 'paint_oob': 0}
         
         # Return initial observation
         obs = self._get_observation()
@@ -356,19 +353,7 @@ class ARC(embodied.Env):
             self.current_output[y, x] = color  # NumPy arrays are [row, col] = [y, x]
             self.painted_positions.add((x, y))
         
-        elif action_type == 1:  # Copy entire input
-            # Check if copy has already been used
-            if self.has_copied:
-                self.last_action_valid = False
-                self.invalid_action_count += 1
-                self.invalid_action_types['copy_duplicate'] += 1
-                return
-            
-            # Valid copy action - execute it
-            self.current_output = self.test_input.copy()
-            self.has_copied = True
-        
-        elif action_type == 2:  # Resize
+        elif action_type == 1:  # Resize
             # Check if resize has already been used
             if self.has_resized:
                 self.last_action_valid = False
@@ -398,7 +383,7 @@ class ARC(embodied.Env):
             # This allows repainting at the same coordinates in the new grid size.
             self.painted_positions.clear()
         
-        # action_type == 3 is "done", no grid modification (always valid)
+        # action_type == 2 is "done", no grid modification (always valid)
     
     def _calculate_reward(self):
         """
@@ -475,9 +460,9 @@ class ARC(embodied.Env):
         Generate observation dict with all paired images.
         
         Action masking system:
-        - valid_actions: [4] array masking action types [paint, copy, resize, done]
+        - valid_actions: [3] array masking action types [paint, resize, done]
           - paint and done are always available (1)
-          - copy and resize can only be used once per episode (0 after use)
+          - resize can only be used once per episode (0 after use)
         - valid_positions: [30, 30] array masking spatial positions for painting
           - 1 = valid position (inside grid boundaries AND not yet painted)
           - 0 = invalid position (outside grid boundaries OR already painted)
@@ -502,11 +487,10 @@ class ARC(embodied.Env):
         # Add mask information
         obs['num_valid_pairs'] = np.int32(self.num_valid_pairs)
 
-        # Action availability mask: [paint, copy, resize, done]
+        # Action availability mask: [paint, resize, done]
         obs['valid_actions'] = np.array([
             1,                          # paint always allowed
-            0 if self.has_copied else 1,
-            0 if self.has_resized else 1,
+            0 if self.has_resized else 1,  # resize can only be used once
             1,                          # done always allowed
         ], dtype=np.int32)
 
