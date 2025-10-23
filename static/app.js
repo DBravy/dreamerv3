@@ -297,6 +297,10 @@ async function startTraining() {
     const puzzlesCountVal = document.getElementById('puzzles-count').value;
     const repeatSingle = document.getElementById('repeat-single').checked;
     const puzzleIndexVal = document.getElementById('puzzle-index').value;
+    const minTargetWidth = document.getElementById('min-target-width').value;
+    const maxTargetWidth = document.getElementById('max-target-width').value;
+    const minTargetHeight = document.getElementById('min-target-height').value;
+    const maxTargetHeight = document.getElementById('max-target-height').value;
 
     // Build additional CLI flags for env overrides
     const extraFlags = [];
@@ -308,6 +312,18 @@ async function startTraining() {
     }
     if (puzzleIndexVal !== '') {
         extraFlags.push(`--env.arc.puzzle_index ${puzzleIndexVal}`);
+    }
+    if (minTargetWidth !== '') {
+        extraFlags.push(`--env.arc.min_target_width ${minTargetWidth}`);
+    }
+    if (maxTargetWidth !== '') {
+        extraFlags.push(`--env.arc.max_target_width ${maxTargetWidth}`);
+    }
+    if (minTargetHeight !== '') {
+        extraFlags.push(`--env.arc.min_target_height ${minTargetHeight}`);
+    }
+    if (maxTargetHeight !== '') {
+        extraFlags.push(`--env.arc.max_target_height ${maxTargetHeight}`);
     }
 
     const combinedArgs = [customArgs, ...extraFlags].filter(Boolean).join(' ').trim();

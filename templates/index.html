@@ -56,6 +56,27 @@
                 <input type="number" id="puzzle-index" placeholder="0-based index" min="0">
             </div>
 
+            <div class="control-group">
+                <label>Grid Size Filters (optional):</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px;">
+                    <div>
+                        <input type="number" id="min-target-width" placeholder="Min width" min="1" max="30" style="width: 100%;">
+                    </div>
+                    <div>
+                        <input type="number" id="max-target-width" placeholder="Max width" min="1" max="30" style="width: 100%;">
+                    </div>
+                    <div>
+                        <input type="number" id="min-target-height" placeholder="Min height" min="1" max="30" style="width: 100%;">
+                    </div>
+                    <div>
+                        <input type="number" id="max-target-height" placeholder="Max height" min="1" max="30" style="width: 100%;">
+                    </div>
+                </div>
+                <small style="color: #888; font-size: 0.85em; margin-top: 4px; display: block;">
+                    Filter puzzles by target output grid dimensions (e.g., 3x3 to 3x3 for only 3x3 targets)
+                </small>
+            </div>
+
             <div class="button-group">
                 <button id="start-btn" class="btn btn-primary">Start Training</button>
                 <button id="stop-btn" class="btn btn-danger" disabled>Stop Training</button>

@@ -23,7 +23,7 @@ class ARC(embodied.Env):
         9: [135, 12, 37],       # Maroon
     }
     
-    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=100, size=64, max_puzzles=None, repeat_single=False, puzzle_index=None, invalid_penalty=0.1):
+    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=100, size=64, max_puzzles=None, repeat_single=False, puzzle_index=None, invalid_penalty=0.1, min_target_height=None, max_target_height=None, min_target_width=None, max_target_width=None):
         """
         Args:
             task: Not used, but required by interface
@@ -36,6 +36,10 @@ class ARC(embodied.Env):
             repeat_single: If True, select a single puzzle on first reset and repeat it every episode
             puzzle_index: Optional explicit index into the loaded puzzles to always use (overrides random)
             invalid_penalty: Penalty for invalid actions (default: 0.1)
+            min_target_height: Optional minimum height for target output grids (filters puzzles)
+            max_target_height: Optional maximum height for target output grids (filters puzzles)
+            min_target_width: Optional minimum width for target output grids (filters puzzles)
+            max_target_width: Optional maximum width for target output grids (filters puzzles)
         """
         self.puzzle_dir = puzzle_dir
         self.version = version
@@ -46,6 +50,10 @@ class ARC(embodied.Env):
         self.repeat_single = repeat_single
         self.puzzle_index = puzzle_index
         self.invalid_penalty = invalid_penalty
+        self.min_target_height = min_target_height
+        self.max_target_height = max_target_height
+        self.min_target_width = min_target_width
+        self.max_target_width = max_target_width
         
         # Construct the full path to puzzles
         self.full_puzzle_path = f"{puzzle_dir}/{version}/data/{split}"
@@ -54,7 +62,14 @@ class ARC(embodied.Env):
         if len(self.puzzles) == 0:
             raise ValueError(f"No puzzles found in {self.full_puzzle_path}. Please check the path.")
         
-        print(f"Loaded {len(self.puzzles)} ARC puzzles from {self.full_puzzle_path} ({version}/{split}); max_puzzles={self.max_puzzles}, repeat_single={self.repeat_single}, puzzle_index={self.puzzle_index}, invalid_penalty={self.invalid_penalty}")
+        filter_info = []
+        if self.min_target_height is not None or self.max_target_height is not None:
+            filter_info.append(f"target_height={self.min_target_height or 0}-{self.max_target_height or '∞'}")
+        if self.min_target_width is not None or self.max_target_width is not None:
+            filter_info.append(f"target_width={self.min_target_width or 0}-{self.max_target_width or '∞'}")
+        filter_str = f", filters=[{', '.join(filter_info)}]" if filter_info else ""
+        
+        print(f"Loaded {len(self.puzzles)} ARC puzzles from {self.full_puzzle_path} ({version}/{split}); max_puzzles={self.max_puzzles}, repeat_single={self.repeat_single}, puzzle_index={self.puzzle_index}, invalid_penalty={self.invalid_penalty}{filter_str}")
         
         # Current episode state
         self.current_puzzle = None
@@ -94,7 +109,9 @@ class ARC(embodied.Env):
                     puzzle = json.load(f)
                     # Validate puzzle has required structure
                     if 'train' in puzzle and 'test' in puzzle:
-                        puzzles.append(puzzle)
+                        # Apply grid size filters if specified
+                        if self._puzzle_matches_filters(puzzle):
+                            puzzles.append(puzzle)
             except Exception as e:
                 print(f"Warning: Could not load {filepath}: {e}")
         
@@ -108,6 +125,37 @@ class ARC(embodied.Env):
                 puzzles = puzzles[:maxn]
         
         return puzzles
+    
+    def _puzzle_matches_filters(self, puzzle):
+        """Check if a puzzle matches the grid size filters."""
+        # If no filters are set, accept all puzzles
+        if (self.min_target_height is None and self.max_target_height is None and
+            self.min_target_width is None and self.max_target_width is None):
+            return True
+        
+        # Check the first test case's output dimensions
+        # (We use the test output as the target grid to match)
+        try:
+            test_output = puzzle['test'][0]['output']
+            height = len(test_output)
+            width = len(test_output[0]) if height > 0 else 0
+            
+            # Check height constraints
+            if self.min_target_height is not None and height < self.min_target_height:
+                return False
+            if self.max_target_height is not None and height > self.max_target_height:
+                return False
+            
+            # Check width constraints
+            if self.min_target_width is not None and width < self.min_target_width:
+                return False
+            if self.max_target_width is not None and width > self.max_target_width:
+                return False
+            
+            return True
+        except (KeyError, IndexError, TypeError):
+            # If we can't get dimensions, reject the puzzle
+            return False
     
     @property
     def obs_space(self):
