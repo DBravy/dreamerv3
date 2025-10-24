@@ -23,7 +23,7 @@ class ARC(embodied.Env):
         9: [135, 12, 37],       # Maroon
     }
     
-    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=50, size=64, max_puzzles=None, repeat_single=False, puzzle_index=None, invalid_penalty=0.1, min_target_height=None, max_target_height=None, min_target_width=None, max_target_width=None):
+    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=50, size=64, max_puzzles=None, repeat_single=False, puzzle_index=None, invalid_penalty=0.1, size_reward_exponent=2.0, min_target_height=None, max_target_height=None, min_target_width=None, max_target_width=None):
         """
         Args:
             task: Not used, but required by interface
@@ -36,6 +36,10 @@ class ARC(embodied.Env):
             repeat_single: If True, select a single puzzle on first reset and repeat it every episode
             puzzle_index: Optional explicit index into the loaded puzzles to always use (overrides random)
             invalid_penalty: Penalty for invalid actions (default: 0.1)
+            size_reward_exponent: Exponent for grid size reward curve (default: 2.0)
+                - 1.0 = linear (equal reward for each step closer)
+                - 2.0 = quadratic (being close to target matters more)
+                - Higher values = even steeper curve (more emphasis on being very close)
             min_target_height: Optional minimum height for all grids in puzzle (filters puzzles)
             max_target_height: Optional maximum height for all grids in puzzle (filters puzzles)
             min_target_width: Optional minimum width for all grids in puzzle (filters puzzles)
@@ -50,6 +54,7 @@ class ARC(embodied.Env):
         self.repeat_single = repeat_single
         self.puzzle_index = puzzle_index
         self.invalid_penalty = invalid_penalty
+        self.size_reward_exponent = size_reward_exponent
         
         # Convert 0 or negative values to None (meaning no filter)
         self.min_target_height = min_target_height if (min_target_height and min_target_height > 0) else None
@@ -71,7 +76,7 @@ class ARC(embodied.Env):
             filter_info.append(f"width={self.min_target_width or 0}-{self.max_target_width or '∞'}")
         filter_str = f", filters=[{', '.join(filter_info)}]" if filter_info else ""
         
-        print(f"Loaded {len(self.puzzles)} ARC puzzles from {self.full_puzzle_path} ({version}/{split}); max_puzzles={self.max_puzzles}, repeat_single={self.repeat_single}, puzzle_index={self.puzzle_index}, invalid_penalty={self.invalid_penalty}{filter_str}")
+        print(f"Loaded {len(self.puzzles)} ARC puzzles from {self.full_puzzle_path} ({version}/{split}); max_puzzles={self.max_puzzles}, repeat_single={self.repeat_single}, puzzle_index={self.puzzle_index}, invalid_penalty={self.invalid_penalty}, size_reward_exponent={self.size_reward_exponent}{filter_str}")
         
         # Current episode state
         self.current_puzzle = None
@@ -468,10 +473,13 @@ class ARC(embodied.Env):
         - This allows the agent to be rewarded for improvements in either dimension
         
         Reward components:
-        1. Grid size accuracy (0 to 1.0): Dense reward for getting closer to correct dimensions
-           - Height accuracy: 1.0 - |current_h - target_h| / 30
-           - Width accuracy: 1.0 - |current_w - target_w| / 30
+        1. Grid size accuracy (0 to 1.0): Dense reward with non-linear curve
+           - Height accuracy: (1.0 - |current_h - target_h| / 30) ** exponent
+           - Width accuracy: (1.0 - |current_w - target_w| / 30) ** exponent
            - Combined: (height_accuracy + width_accuracy) / 2
+           - Non-linear curve (default exponent=2.0) makes being close to target more valuable:
+             * Far from target (e.g. 30→29): small reward improvement
+             * Close to target (e.g. 4→3): large reward improvement
            - Getting exact height OR exact width gives 0.5 accuracy (half credit)
            - Getting both gives 1.0 accuracy (full credit)
         
@@ -491,13 +499,19 @@ class ARC(embodied.Env):
         
         # ===== Component 1: Grid Size Accuracy (0 to 1.0) =====
         # Dense reward that judges height and width separately
+        # Uses a non-linear curve to make being close to the target more valuable
         # Each dimension contributes 0.5 to the total (so 0.5 + 0.5 = 1.0 max)
         
-        # Height accuracy: 1.0 if exact match, decreases linearly with distance
-        height_accuracy = max(0.0, 1.0 - abs(current_h - target_h) / 30.0)
+        # Calculate linear accuracy (1.0 at exact match, 0.0 at max distance)
+        height_linear = max(0.0, 1.0 - abs(current_h - target_h) / 30.0)
+        width_linear = max(0.0, 1.0 - abs(current_w - target_w) / 30.0)
         
-        # Width accuracy: 1.0 if exact match, decreases linearly with distance
-        width_accuracy = max(0.0, 1.0 - abs(current_w - target_w) / 30.0)
+        # Apply non-linear curve using the exponent
+        # exponent = 1.0: linear (each step equally valuable)
+        # exponent = 2.0: quadratic (being close is much more valuable)
+        # exponent > 2.0: even steeper (heavily rewards being very close)
+        height_accuracy = height_linear ** self.size_reward_exponent
+        width_accuracy = width_linear ** self.size_reward_exponent
         
         # Combined grid size accuracy (average of height and width)
         # This means: exact height only = 0.5, exact width only = 0.5, both = 1.0
