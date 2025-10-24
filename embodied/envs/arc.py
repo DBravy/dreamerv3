@@ -125,6 +125,10 @@ class ARC(embodied.Env):
         # Track previous accuracy for delta rewards (separate components)
         self.previous_grid_size_accuracy = 0.0
         self.previous_content_accuracy = 0.0
+        
+        # Track color counts for reward limiting
+        self.target_color_counts = {}  # How many of each color in target
+        self.rewarded_color_counts = {}  # How many times we've rewarded each color
     
     def _load_puzzles(self):
         """Load ARC JSON files from the specified version and split directory."""
@@ -366,6 +370,14 @@ class ARC(embodied.Env):
         self.selected_colors = set()  # Reset selected colors tracking
         self.selected_colors.add(0)  # Black is selected by default
         
+        # Count how many of each color appear in the target grid
+        self.target_color_counts = {}
+        self.rewarded_color_counts = {}
+        for color in range(10):  # Colors 0-9
+            count = int(np.sum(self.test_output == color))
+            self.target_color_counts[color] = count
+            self.rewarded_color_counts[color] = 0
+        
         # Reset validity tracking
         self.last_action_valid = True
         self.invalid_action_count = 0
@@ -565,9 +577,16 @@ class ARC(embodied.Env):
                 elif not np.any(self.test_output == painted_color):
                     # Wrong color (not in target) → 0 reward
                     paint_reward = 0.0
+                # Check if we've already rewarded this color too many times
+                elif self.rewarded_color_counts[painted_color] >= self.target_color_counts[painted_color]:
+                    # Already painted this color as many times as it appears in target → 0 reward
+                    paint_reward = 0.0
                 else:
-                    # Correct color (exists in target) → base 0.5 reward
+                    # Correct color (exists in target) and still under the limit → base 0.5 reward
                     paint_reward = 0.5
+                    
+                    # Increment the rewarded count for this color
+                    self.rewarded_color_counts[painted_color] += 1
                     
                     # Find the nearest position in target grid with this color
                     # Get all positions with this color in the target
