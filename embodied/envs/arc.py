@@ -202,7 +202,7 @@ class ARC(embodied.Env):
             'test_pair': elements.Space(np.uint8, pair_shape),  # test_input | current_work (for policy to see current state)
             'target_pair': elements.Space(np.uint8, pair_shape),  # test_input | ground_truth (for world model to learn complete solution)
             'num_valid_pairs': elements.Space(np.int32, (), 0, 5),  # How many of pair_1-5 are real (0-5)
-            'valid_actions': elements.Space(np.int32, (4,), 0, 1),  # Mask for [paint, resize, set_color, done]
+            'valid_actions': elements.Space(np.int32, (4,), 0, 1),  # Mask for [paint, resize, done, set_color] matching action_type indices
             'current_color': elements.Space(np.int32, (), 0, 9),  # Currently selected color (0-9)
             'reward': elements.Space(np.float32),
             'is_first': elements.Space(bool),
@@ -541,11 +541,11 @@ class ARC(embodied.Env):
         Generate observation dict with all paired images.
         
         Action masking system:
-        - valid_actions: [4] array masking action types [paint, resize, set_color, done]
-          - paint is only available AFTER resize is performed (0 before resize, 1 after)
-          - resize can only be used once as the first action (1 on first step, 0 after)
-          - set_color is always available (1)
-          - done is only available after 10 steps (0 before step 10, 1 after)
+        - valid_actions: [4] array masking action types matching action_type indices [0:paint, 1:resize, 2:done, 3:set_color]
+          - paint (index 0) is only available AFTER resize is performed (0 before resize, 1 after)
+          - resize (index 1) can only be used once as the first action (1 on first step, 0 after)
+          - done (index 2) is only available after 10 steps (0 before step 10, 1 after)
+          - set_color (index 3) is always available (1)
         - valid_positions: [30, 30] array masking spatial positions for painting
           - 1 = valid position (inside grid boundaries AND not yet painted)
           - 0 = invalid position (outside grid boundaries OR already painted)
@@ -571,13 +571,13 @@ class ARC(embodied.Env):
         # Add mask information
         obs['num_valid_pairs'] = np.int32(self.num_valid_pairs)
 
-        # Action availability mask: [paint, resize, set_color, done]
+        # Action availability mask: [paint, resize, done, set_color] matching action_type indices [0, 1, 2, 3]
         # Enforce: resize must be first action, then only paint/set_color/done allowed
         obs['valid_actions'] = np.array([
-            1 if self.has_resized else 0,  # paint only allowed AFTER resize
-            0 if self.has_resized else 1,  # resize only allowed as first action
-            1,                              # set_color always allowed
-            1 if self.step_count >= 10 else 0,  # done only allowed after 10 steps
+            1 if self.has_resized else 0,  # [0] paint only allowed AFTER resize
+            0 if self.has_resized else 1,  # [1] resize only allowed as first action
+            1 if self.step_count >= 10 else 0,  # [2] done only allowed after 10 steps
+            1,                              # [3] set_color always allowed
         ], dtype=np.int32)
         
         # Add current color to observation
