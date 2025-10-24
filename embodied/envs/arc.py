@@ -118,7 +118,8 @@ class ARC(embodied.Env):
             'paint_before_color': 0,
             'first_step_not_resize': 0,
             'second_step_not_set_color': 0,
-            'set_color_before_resize': 0
+            'set_color_before_resize': 0,
+            'paint_same_color': 0
         }
         
         # Track previous accuracy for delta rewards (separate components)
@@ -376,7 +377,8 @@ class ARC(embodied.Env):
             'paint_before_color': 0,
             'first_step_not_resize': 0,
             'second_step_not_set_color': 0,
-            'set_color_before_resize': 0
+            'set_color_before_resize': 0,
+            'paint_same_color': 0
         }
         
         # Initialize accuracy tracking to starting grid state
@@ -452,6 +454,15 @@ class ARC(embodied.Env):
                 self.last_action_valid = False
                 self.invalid_action_count += 1
                 self.invalid_action_types['paint_duplicate'] += 1
+                return
+            
+            # Check if painting the same color that's already at this position
+            if self.current_output[y, x] == self.current_color:
+                self.last_action_valid = False
+                self.invalid_action_count += 1
+                if 'paint_same_color' not in self.invalid_action_types:
+                    self.invalid_action_types['paint_same_color'] = 0
+                self.invalid_action_types['paint_same_color'] += 1
                 return
             
             # Valid paint action - execute it using current_color
