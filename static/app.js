@@ -130,6 +130,57 @@ function initCharts() {
         }
     });
 
+    // Reward Chart
+    const rewardCtx = document.getElementById('reward-chart').getContext('2d');
+    charts.reward = new Chart(rewardCtx, {
+        ...chartConfig,
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Episode Reward',
+                    data: [],
+                    borderColor: 'rgba(239, 68, 68, 0.5)',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    tension: 0.1,
+                    borderWidth: 1,
+                    pointRadius: 2,
+                },
+                {
+                    label: 'Reward (Moving Avg)',
+                    data: [],
+                    borderColor: 'rgba(239, 68, 68, 1)',
+                    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                    tension: 0.4,
+                    borderWidth: 3,
+                    pointRadius: 0,
+                }
+            ]
+        },
+        options: {
+            ...chartConfig.options,
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Steps'
+                    },
+                    ticks: {
+                        maxTicksLimit: 10
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'Reward'
+                    },
+                    min: 0,
+                    max: 1
+                }
+            }
+        }
+    });
+
     // Length Chart
     const lengthCtx = document.getElementById('length-chart').getContext('2d');
     charts.length = new Chart(lengthCtx, {
@@ -204,6 +255,12 @@ async function updateMetrics() {
         charts.accuracy.data.datasets[0].data = data.accuracies.slice(startIdx);
         charts.accuracy.data.datasets[1].data = data.accuracies_ma.slice(startIdx);
         charts.accuracy.update('none');
+
+        // Reward chart
+        charts.reward.data.labels = data.steps.slice(startIdx);
+        charts.reward.data.datasets[0].data = data.rewards.slice(startIdx);
+        charts.reward.data.datasets[1].data = data.rewards_ma.slice(startIdx);
+        charts.reward.update('none');
 
         // Length chart
         charts.length.data.labels = data.steps.slice(startIdx);

@@ -26,6 +26,7 @@ is_training = False
 metrics_data = {
     'steps': deque(maxlen=1000),
     'accuracies': deque(maxlen=1000),  # Track end-of-episode accuracy (0-100%)
+    'rewards': deque(maxlen=1000),  # Track raw episode rewards
     'lengths': deque(maxlen=1000),
     'train_loss': deque(maxlen=1000),
     'timestamps': deque(maxlen=1000),
@@ -130,7 +131,9 @@ def monitor_training():
                                 # Extract end-of-episode accuracy from final reward (0-1) -> percentage (0-100)
                                 if 'episode/final_reward' in metric:
                                     metrics_data['steps'].append(step)
-                                    accuracy_percent = float(metric['episode/final_reward']) * 100.0
+                                    raw_reward = float(metric['episode/final_reward'])
+                                    metrics_data['rewards'].append(raw_reward)
+                                    accuracy_percent = raw_reward * 100.0
                                     # Clamp to [0, 100] for display stability
                                     accuracy_percent = max(0.0, min(100.0, accuracy_percent))
                                     metrics_data['accuracies'].append(accuracy_percent)
@@ -305,11 +308,13 @@ def api_metrics():
     # Convert deques to lists
     steps = list(metrics_data['steps'])
     accuracies = list(metrics_data['accuracies'])
+    rewards = list(metrics_data.get('rewards', []))
     lengths = list(metrics_data['lengths'])
     train_loss = list(metrics_data.get('train_loss', []))
     
     # Calculate moving averages
     accuracies_ma = calculate_moving_average(accuracies, window)
+    rewards_ma = calculate_moving_average(rewards, window)
     lengths_ma = calculate_moving_average(lengths, window)
     train_loss_ma = calculate_moving_average(train_loss, window) if train_loss else []
     
@@ -318,6 +323,8 @@ def api_metrics():
         'step': steps[-1] if steps else 0,
         'accuracy': accuracies[-1] if accuracies else 0,
         'accuracy_ma': accuracies_ma[-1] if accuracies_ma else 0,
+        'reward': rewards[-1] if rewards else 0,
+        'reward_ma': rewards_ma[-1] if rewards_ma else 0,
         'length': lengths[-1] if lengths else 0,
         'length_ma': lengths_ma[-1] if lengths_ma else 0,
         'train_loss': train_loss[-1] if train_loss else 0,
@@ -328,6 +335,8 @@ def api_metrics():
         'steps': steps,
         'accuracies': accuracies,
         'accuracies_ma': accuracies_ma,
+        'rewards': rewards,
+        'rewards_ma': rewards_ma,
         'lengths': lengths,
         'lengths_ma': lengths_ma,
         'train_loss': train_loss,
@@ -379,6 +388,7 @@ def api_clear():
     metrics_data = {
         'steps': deque(maxlen=1000),
         'accuracies': deque(maxlen=1000),
+        'rewards': deque(maxlen=1000),
         'lengths': deque(maxlen=1000),
         'train_loss': deque(maxlen=1000),
         'timestamps': deque(maxlen=1000),
