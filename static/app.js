@@ -20,9 +20,8 @@ const ARC_COLORS = {
 
 const ACTION_TYPE_NAMES = {
     0: 'Paint',
-    1: 'Copy',
-    2: 'Resize',
-    3: 'Done'
+    1: 'Resize',    // Changed from 'Copy'
+    2: 'Done'
 };
 
 const COLOR_NAMES = {
