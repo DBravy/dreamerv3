@@ -651,11 +651,15 @@ class ARC(embodied.Env):
     
     def _save_episode_data(self, final_reward):
         """Save the completed episode data for visualization."""
+        # Calculate total reward by summing all step rewards
+        total_reward = sum(action.get('reward', 0.0) for action in self.action_history)
+        
         self.last_episode_data = {
             'test_input': self.test_input.tolist(),
             'test_output': self.test_output.tolist(),  # Ground truth
             'agent_output': self.current_output.tolist(),  # Agent's final answer
             'final_reward': float(final_reward),
+            'total_reward': float(total_reward),  # Sum of all step rewards
             'steps': int(self.step_count),
             'actions': self.action_history,  # Complete action history
             # Invalid action statistics

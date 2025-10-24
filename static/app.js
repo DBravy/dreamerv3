@@ -666,8 +666,8 @@ async function updateGridVisualization() {
                     <span>Accuracy</span>
                 </div>
                 <div class="grid-stat">
-                    <span class="grid-stat-value">${data.final_reward.toFixed(3)}</span>
-                    <span>Reward</span>
+                    <span class="grid-stat-value">${data.total_reward.toFixed(3)}</span>
+                    <span>Total Reward</span>
                 </div>
                 <div class="grid-stat">
                     <span class="grid-stat-value">${data.steps}</span>
