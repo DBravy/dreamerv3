@@ -583,7 +583,7 @@ class ARC(embodied.Env):
           - paint (index 0) is only available AFTER resize is performed (0 before resize, 1 after)
           - resize (index 1) can only be used once as the first action (1 on first step, 0 after)
           - done (index 2) is only available after 10 steps (0 before step 10, 1 after)
-          - set_color (index 3) is always available (1)
+          - set_color (index 3) is only available AFTER step 0 (0 on step 0, 1 after)
         - valid_positions: [30, 30] array masking spatial positions for painting
           - 1 = valid position (inside grid boundaries AND not yet painted)
           - 0 = invalid position (outside grid boundaries OR already painted)
@@ -610,12 +610,12 @@ class ARC(embodied.Env):
         obs['num_valid_pairs'] = np.int32(self.num_valid_pairs)
 
         # Action availability mask: [paint, resize, done, set_color] matching action_type indices [0, 1, 2, 3]
-        # Enforce: resize must be first action, then only paint/set_color/done allowed
+        # Enforce: resize must be first action (step 0), then only paint/set_color/done allowed
         obs['valid_actions'] = np.array([
             1 if self.has_resized else 0,  # [0] paint only allowed AFTER resize
             1 if (self.step_count == 0 and not self.has_resized) else 0,  # [1] resize ONLY on step 0
             1 if self.step_count >= 10 else 0,  # [2] done only allowed after 10 steps
-            1,                              # [3] set_color always allowed
+            0 if self.step_count == 0 else 1,  # [3] set_color only allowed AFTER step 0 (after resize)
         ], dtype=np.int32)
         
         # Add current color to observation
