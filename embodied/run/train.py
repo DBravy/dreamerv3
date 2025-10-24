@@ -1,4 +1,7 @@
 import collections
+import os
+import shutil
+from pathlib import Path
 from functools import partial as bind
 
 import elements
@@ -26,6 +29,26 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
   should_log = embodied.LocalClock(args.log_every)
   should_report = embodied.LocalClock(args.report_every)
   should_save = embodied.LocalClock(args.save_every)
+
+  def prune_checkpoints(ckpt_dir, keep):
+    try:
+      if keep is None or keep < 0:
+        return
+      path = Path(str(ckpt_dir))
+      if not path.exists():
+        return
+      entries = [p for p in path.iterdir() if p.is_dir()]
+      if not entries:
+        return
+      entries.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+      for old in entries[keep:]:
+        try:
+          shutil.rmtree(old, ignore_errors=True)
+        except Exception:
+          pass
+    except Exception:
+      # Best effort pruning; ignore errors
+      pass
 
   @elements.timer.section('logfn')
   def logfn(tran, worker):
@@ -118,5 +141,6 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
 
     if should_save(step):
       cp.save()
+      prune_checkpoints(logdir / 'ckpt', getattr(args, 'keep_last_checkpoints', -1))
 
   logger.close()

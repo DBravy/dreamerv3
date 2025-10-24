@@ -1,4 +1,7 @@
 import collections
+import os
+import shutil
+from pathlib import Path
 from functools import partial as bind
 
 import elements
@@ -39,6 +42,25 @@ def train_eval(
   should_log = elements.when.Clock(args.log_every)
   should_report = elements.when.Clock(args.report_every)
   should_save = elements.when.Clock(args.save_every)
+
+  def prune_checkpoints(ckpt_dir, keep):
+    try:
+      if keep is None or keep < 0:
+        return
+      path = Path(str(ckpt_dir))
+      if not path.exists():
+        return
+      entries = [p for p in path.iterdir() if p.is_dir()]
+      if not entries:
+        return
+      entries.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+      for old in entries[keep:]:
+        try:
+          shutil.rmtree(old, ignore_errors=True)
+        except Exception:
+          pass
+    except Exception:
+      pass
 
   @elements.timer.section('logfn')
   def logfn(tran, worker, mode):
@@ -157,5 +179,6 @@ def train_eval(
 
     if should_save(step):
       cp.save()
+      prune_checkpoints(logdir / 'ckpt', getattr(args, 'keep_last_checkpoints', -1))
 
   logger.close()

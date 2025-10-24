@@ -1,6 +1,9 @@
 import collections
+import os
+import shutil
 import threading
 import time
+from pathlib import Path
 from functools import partial as bind
 
 import cloudpickle
@@ -149,6 +152,26 @@ def parallel_learner(agent, barrier, args):
       args.replay_addr, 'LearnerReplayUpdater', maxinflight=8)
   barrier.wait()
 
+  def prune_checkpoints(ckpt_root, keep):
+    try:
+      if keep is None or keep < 0:
+        return
+      root = Path(str(ckpt_root))
+      if not root.exists():
+        return
+      # In parallel mode we have nested dirs under ckpt/ (agent, replay, logger)
+      subdirs = [p for p in root.iterdir() if p.is_dir()]
+      for sub in subdirs:
+        entries = [p for p in sub.iterdir() if p.is_dir()]
+        entries.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        for old in entries[keep:]:
+          try:
+            shutil.rmtree(old, ignore_errors=True)
+          except Exception:
+            pass
+    except Exception:
+      pass
+
   replays = {}
   received = collections.defaultdict(int)
   def parallel_stream(source, prefetch=2):
@@ -216,6 +239,7 @@ def parallel_learner(agent, barrier, args):
 
     if should_save():
       cp.save()
+      prune_checkpoints(elements.Path(args.logdir) / 'ckpt', getattr(args, 'keep_last_checkpoints', -1))
 
 
 def parallel_replay(make_replay_train, make_replay_eval, make_stream, args):
@@ -301,6 +325,19 @@ def parallel_replay(make_replay_train, make_replay_eval, make_stream, args):
     if should_save() and active > 0:
       active.reset()
       cp.save()
+      # Prune under ckpt/replay
+      try:
+        keep = getattr(args, 'keep_last_checkpoints', -1)
+        if keep is not None and keep >= 0:
+          root = elements.Path(args.logdir) / 'ckpt' / 'replay'
+          root = Path(str(root))
+          if root.exists():
+            entries = [p for p in root.iterdir() if p.is_dir()]
+            entries.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            for old in entries[keep:]:
+              shutil.rmtree(old, ignore_errors=True)
+      except Exception:
+        pass
     if should_log():
       stats = {}
       stats['timer/replay'] = elements.timer.stats()['summary']
@@ -414,6 +451,19 @@ def parallel_logger(make_logger, args):
       last_step = int(logger.step)
     if should_save():
       cp.save()
+      # Prune under ckpt/logger
+      try:
+        keep = getattr(args, 'keep_last_checkpoints', -1)
+        if keep is not None and keep >= 0:
+          root = elements.Path(args.logdir) / 'ckpt' / 'logger'
+          root = Path(str(root))
+          if root.exists():
+            entries = [p for p in root.iterdir() if p.is_dir()]
+            entries.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            for old in entries[keep:]:
+              shutil.rmtree(old, ignore_errors=True)
+      except Exception:
+        pass
 
 
 @elements.timer.section('env')

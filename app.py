@@ -238,7 +238,40 @@ def start_training_process(config='arc', custom_args=''):
     
     # Create timestamp for logdir
     timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-    current_logdir = str(Path.home() / 'logdir' / timestamp)
+    base_logdir = Path.home() / 'logdir'
+    current_logdir = str(base_logdir / timestamp)
+
+    # Best-effort prune old run directories according to default config keep_last_runs
+    try:
+        # Default keep from configs.yaml run.keep_last_runs
+        default_keep = 10
+        keep_last_runs = default_keep
+        # Allow override via custom_args e.g. --run.keep_last_runs=20
+        for token in (custom_args or '').split():
+            if token.startswith('--run.keep_last_runs='):
+                try:
+                    keep_last_runs = int(token.split('=', 1)[1])
+                except ValueError:
+                    pass
+        if keep_last_runs >= 0 and base_logdir.exists():
+            runs = [p for p in base_logdir.iterdir() if p.is_dir()]
+            runs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            for old in runs[keep_last_runs:]:
+                try:
+                    # Only delete directories that look like timestamps YYYYMMDD-HHMMSS
+                    if '-' in old.name and len(old.name) >= 15:
+                        # Remove large ckpt subdirs first for speed
+                        ckpt = old / 'ckpt'
+                        if ckpt.exists():
+                            import shutil
+                            shutil.rmtree(ckpt, ignore_errors=True)
+                        # Then remove the run dir
+                        import shutil
+                        shutil.rmtree(old, ignore_errors=True)
+                except Exception:
+                    pass
+    except Exception:
+        pass
     
     # Build command
     cmd = [

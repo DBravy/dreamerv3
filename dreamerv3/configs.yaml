@@ -50,6 +50,9 @@ defaults:
     steps: 1e10
     duration: 0
     train_ratio: 32.0
+    # Retention policy
+    keep_last_checkpoints: 5  # -1 to disable pruning; keeps last N checkpoint saves
+    keep_last_runs: 10        # Only used by the web app launcher; -1 to disable
     log_every: 120
     report_every: 300
     save_every: 900
@@ -71,7 +74,7 @@ defaults:
     debug: True
 
   jax:
-    platform: cpu # changed from cuda for local testing
+    platform: cuda # changed from cuda for local testing
     compute_dtype: bfloat16
     policy_devices: [0]
     train_devices: [0]
