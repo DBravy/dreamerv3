@@ -126,21 +126,43 @@ def monitor_training():
                         if line.strip():
                             try:
                                 metric = json.loads(line)
+                                
+                                # DEBUG: Print available keys for first metric to help with debugging
+                                if last_position == 0 and 'step' in metric:
+                                    print(f"DEBUG: Available metric keys: {list(metric.keys())}")
+                                
                                 step = metric.get('step', 0)
                                 
                                 # Extract end-of-episode accuracy from final reward (0-1) -> percentage (0-100)
-                                if 'episode/final_reward' in metric:
+                                # Try multiple possible metric names for rewards
+                                reward_keys = ['episode/final_reward', 'episode/reward', 'reward', 'episode_reward']
+                                reward_value = None
+                                
+                                for key in reward_keys:
+                                    if key in metric:
+                                        reward_value = float(metric[key])
+                                        break
+                                
+                                if reward_value is not None:
                                     metrics_data['steps'].append(step)
-                                    raw_reward = float(metric['episode/final_reward'])
-                                    metrics_data['rewards'].append(raw_reward)
-                                    accuracy_percent = raw_reward * 100.0
+                                    metrics_data['rewards'].append(reward_value)
+                                    accuracy_percent = reward_value * 100.0
                                     # Clamp to [0, 100] for display stability
                                     accuracy_percent = max(0.0, min(100.0, accuracy_percent))
                                     metrics_data['accuracies'].append(accuracy_percent)
                                     metrics_data['timestamps'].append(time.time())
+                                    print(f"DEBUG: Step {step}, Reward: {reward_value:.3f}, Accuracy: {accuracy_percent:.1f}%")
+                                else:
+                                    # Check if this looks like an episode metric but we couldn't find reward
+                                    if any(key.startswith('episode') for key in metric.keys()):
+                                        print(f"DEBUG: Found episode metric at step {step} but no reward key. Keys: {[k for k in metric.keys() if 'episode' in k.lower() or 'reward' in k.lower()]}")
                                 
-                                if 'episode/length' in metric:
-                                    metrics_data['lengths'].append(metric['episode/length'])
+                                # Try multiple possible metric names for episode length
+                                length_keys = ['episode/length', 'episode_length', 'length']
+                                for key in length_keys:
+                                    if key in metric:
+                                        metrics_data['lengths'].append(metric[key])
+                                        break
                                 
                                 # Extract training loss (may vary by model)
                                 for key in metric:
@@ -411,4 +433,3 @@ if __name__ == '__main__':
     Path('static').mkdir(exist_ok=True)
     
     app.run(host='0.0.0.0', port=5003, debug=False, threaded=True)
-
