@@ -263,6 +263,10 @@ class ARC(embodied.Env):
         # Calculate reward (delta-based: improvement + one-time bonuses/penalties)
         reward, current_base_accuracy = self._calculate_reward(new_useful_color)
         
+        # Add reward to the action record
+        action_record['reward'] = float(reward)
+        action_record['base_accuracy'] = float(current_base_accuracy)
+        
         # Update tracked accuracy for next step's delta calculation
         self.previous_base_accuracy = current_base_accuracy
         

@@ -514,6 +514,18 @@ function formatActionDetailed(action) {
         parts.push(`<span>Selected color: <span style="display: inline-block; width: 12px; height: 12px; background: ${colorStyle}; border: 1px solid #666; vertical-align: middle; margin-right: 4px;"></span>${color}</span>`);
     }
     
+    // Add reward information if available
+    if (action.reward !== undefined) {
+        const rewardColor = action.reward >= 0 ? '#10b981' : '#ef4444';
+        const rewardSign = action.reward >= 0 ? '+' : '';
+        parts.push(`<span style="color: ${rewardColor}; font-weight: bold;">Reward: ${rewardSign}${action.reward.toFixed(4)}</span>`);
+    }
+    
+    // Add base accuracy if available
+    if (action.base_accuracy !== undefined) {
+        parts.push(`<span style="color: #6b7280;">Accuracy: ${(action.base_accuracy * 100).toFixed(1)}%</span>`);
+    }
+    
     return parts.join('<br>');
 }
 
