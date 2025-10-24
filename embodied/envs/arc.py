@@ -205,7 +205,7 @@ class ARC(embodied.Env):
     def act_space(self):
         """Define action space for grid editing."""
         return {
-            'action_type': elements.Space(np.int32, (), 0, 2),  # 0:paint, 1:resize, 2:done
+            'action_type': elements.Space(np.int32, (), 0, 3),  # 0:paint, 1:resize, 2:done
             'x': elements.Space(np.int32, (), 0, 30),
             'y': elements.Space(np.int32, (), 0, 30),
             'color': elements.Space(np.int32, (), 0, 9),
