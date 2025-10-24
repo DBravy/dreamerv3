@@ -96,6 +96,8 @@ class ARC(embodied.Env):
         
         # Track which actions have been used to prevent repeats
         self.has_resized = False
+        # Require explicit color selection after resize before painting
+        self.has_selected_color = False
         self.painted_positions = set()  # Set of (x, y) tuples
         self.fixed_puzzle = None  # When repeat_single is True, hold onto the chosen puzzle
         
@@ -112,7 +114,11 @@ class ARC(embodied.Env):
             'paint_duplicate': 0, 
             'resize_duplicate': 0, 
             'paint_oob': 0,
-            'paint_before_resize': 0
+            'paint_before_resize': 0,
+            'paint_before_color': 0,
+            'first_step_not_resize': 0,
+            'second_step_not_set_color': 0,
+            'set_color_before_resize': 0
         }
         
         # Track previous accuracy for delta rewards (separate components)
@@ -263,7 +269,8 @@ class ARC(embodied.Env):
             # Check if this is a new color (not previously selected)
             if selected_color not in previous_selected_colors:
                 # Check if this color appears in the target output
-                if np.any(self.test_output == selected_color):
+                # Do not count black (0) as a useful new color
+                if selected_color != 0 and np.any(self.test_output == selected_color):
                     new_useful_color = True
         
         # Calculate reward (delta-based: improvement + one-time bonuses/penalties)
@@ -350,6 +357,7 @@ class ARC(embodied.Env):
         self.step_count = 0
         self.action_history = []
         self.has_resized = False
+        self.has_selected_color = False
         self.painted_positions = set()
         
         # NEW: Reset color to default (black)
@@ -364,7 +372,11 @@ class ARC(embodied.Env):
             'paint_duplicate': 0, 
             'resize_duplicate': 0, 
             'paint_oob': 0,
-            'paint_before_resize': 0
+            'paint_before_resize': 0,
+            'paint_before_color': 0,
+            'first_step_not_resize': 0,
+            'second_step_not_set_color': 0,
+            'set_color_before_resize': 0
         }
         
         # Initialize accuracy tracking to starting grid state
@@ -391,6 +403,23 @@ class ARC(embodied.Env):
         
         # Assume action is valid until proven otherwise
         self.last_action_valid = True
+
+        # Enforce strict step order for the first two steps:
+        # Step 0: must be resize; Step 1: must be set_color.
+        if self.step_count == 0 and action_type != 1:
+            self.last_action_valid = False
+            self.invalid_action_count += 1
+            if 'first_step_not_resize' not in self.invalid_action_types:
+                self.invalid_action_types['first_step_not_resize'] = 0
+            self.invalid_action_types['first_step_not_resize'] += 1
+            return
+        if self.step_count == 1 and action_type != 3:
+            self.last_action_valid = False
+            self.invalid_action_count += 1
+            if 'second_step_not_set_color' not in self.invalid_action_types:
+                self.invalid_action_types['second_step_not_set_color'] = 0
+            self.invalid_action_types['second_step_not_set_color'] += 1
+            return
         
         if action_type == 0:  # Paint (using current_color)
             # Check if resize has been done first
@@ -400,6 +429,14 @@ class ARC(embodied.Env):
                 if 'paint_before_resize' not in self.invalid_action_types:
                     self.invalid_action_types['paint_before_resize'] = 0
                 self.invalid_action_types['paint_before_resize'] += 1
+                return
+            # Require explicit color selection before painting
+            if not self.has_selected_color:
+                self.last_action_valid = False
+                self.invalid_action_count += 1
+                if 'paint_before_color' not in self.invalid_action_types:
+                    self.invalid_action_types['paint_before_color'] = 0
+                self.invalid_action_types['paint_before_color'] += 1
                 return
             
             # Check if position is out of bounds
@@ -452,6 +489,14 @@ class ARC(embodied.Env):
             self.painted_positions.clear()
         
         elif action_type == 3:  # Set color
+            # Disallow selecting a color before resize
+            if not self.has_resized:
+                self.last_action_valid = False
+                self.invalid_action_count += 1
+                if 'set_color_before_resize' not in self.invalid_action_types:
+                    self.invalid_action_types['set_color_before_resize'] = 0
+                self.invalid_action_types['set_color_before_resize'] += 1
+                return
             # Update the current color
             color = int(action['color'])
             new_color = np.clip(color, 0, 9)  # Ensure color is in valid range
@@ -459,6 +504,8 @@ class ARC(embodied.Env):
             
             # Track this color as selected (for reward calculation)
             self.selected_colors.add(new_color)
+            # Mark that an explicit color has been selected (even if black)
+            self.has_selected_color = True
         
         # action_type == 2 is "done", no grid modification (always valid)
     
@@ -634,12 +681,12 @@ class ARC(embodied.Env):
         obs['num_valid_pairs'] = np.int32(self.num_valid_pairs)
 
         # Action availability mask: [paint, resize, done, set_color] matching action_type indices [0, 1, 2, 3]
-        # Enforce: resize must be first action (step 0), then only paint/set_color/done allowed
+        # Enforce: step 0 must be resize; step 1 must be set_color; painting requires resize and explicit color selection
         obs['valid_actions'] = np.array([
-            1 if self.has_resized else 0,  # [0] paint only allowed AFTER resize
+            1 if (self.has_resized and self.has_selected_color and self.step_count >= 2) else 0,  # [0] paint only after resize AND color selection
             1 if (self.step_count == 0 and not self.has_resized) else 0,  # [1] resize ONLY on step 0
             1 if self.step_count >= 10 else 0,  # [2] done only allowed after 10 steps
-            0 if self.step_count == 0 else 1,  # [3] set_color only allowed AFTER step 0 (after resize)
+            1 if self.step_count >= 1 else 0,  # [3] set_color only allowed AFTER step 0 (after resize)
         ], dtype=np.int32)
         
         # Add current color to observation
