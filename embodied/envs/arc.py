@@ -97,7 +97,12 @@ class ARC(embodied.Env):
         # NEW: Track action validity
         self.last_action_valid = True
         self.invalid_action_count = 0
-        self.invalid_action_types = {'paint_duplicate': 0, 'resize_duplicate': 0, 'paint_oob': 0}
+        self.invalid_action_types = {
+            'paint_duplicate': 0, 
+            'resize_duplicate': 0, 
+            'paint_oob': 0,
+            'paint_before_resize': 0  # NEW: Track attempts to paint before resizing
+        }
     
     def _load_puzzles(self):
         """Load ARC JSON files from the specified version and split directory."""
@@ -311,7 +316,12 @@ class ARC(embodied.Env):
         # NEW: Reset validity tracking
         self.last_action_valid = True
         self.invalid_action_count = 0
-        self.invalid_action_types = {'paint_duplicate': 0, 'resize_duplicate': 0, 'paint_oob': 0}
+        self.invalid_action_types = {
+            'paint_duplicate': 0, 
+            'resize_duplicate': 0, 
+            'paint_oob': 0,
+            'paint_before_resize': 0
+        }
         
         # Return initial observation
         obs = self._get_observation()
@@ -333,6 +343,15 @@ class ARC(embodied.Env):
         self.last_action_valid = True
         
         if action_type == 0:  # Paint
+            # NEW: Check if resize has been done first
+            if not self.has_resized:
+                self.last_action_valid = False
+                self.invalid_action_count += 1
+                if 'paint_before_resize' not in self.invalid_action_types:
+                    self.invalid_action_types['paint_before_resize'] = 0
+                self.invalid_action_types['paint_before_resize'] += 1
+                return
+            
             # Check if position is out of bounds
             h, w = self.current_output.shape
             if x >= w or y >= h or x < 0 or y < 0:
@@ -461,8 +480,9 @@ class ARC(embodied.Env):
         
         Action masking system:
         - valid_actions: [3] array masking action types [paint, resize, done]
-          - paint and done are always available (1)
-          - resize can only be used once per episode (0 after use)
+          - paint is only available AFTER resize is performed (0 before resize, 1 after)
+          - resize can only be used once as the first action (1 on first step, 0 after)
+          - done is always available (1)
         - valid_positions: [30, 30] array masking spatial positions for painting
           - 1 = valid position (inside grid boundaries AND not yet painted)
           - 0 = invalid position (outside grid boundaries OR already painted)
@@ -488,10 +508,11 @@ class ARC(embodied.Env):
         obs['num_valid_pairs'] = np.int32(self.num_valid_pairs)
 
         # Action availability mask: [paint, resize, done]
+        # Enforce: resize must be first action, then only paint or done allowed
         obs['valid_actions'] = np.array([
-            1,                          # paint always allowed
-            0 if self.has_resized else 1,  # resize can only be used once
-            1,                          # done always allowed
+            1 if self.has_resized else 0,  # paint only allowed AFTER resize
+            0 if self.has_resized else 1,  # resize only allowed as first action
+            1,                              # done always allowed
         ], dtype=np.int32)
 
         # NEW: Spatial mask for valid paint positions
