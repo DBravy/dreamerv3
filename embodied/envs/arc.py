@@ -218,6 +218,20 @@ class ARC(embodied.Env):
             'pair_5': elements.Space(np.uint8, pair_shape),
             'test_pair': elements.Space(np.uint8, pair_shape),  # test_input | current_work (for policy to see current state)
             'target_pair': elements.Space(np.uint8, pair_shape),  # test_input | ground_truth (for world model to learn complete solution)
+            # Grid dimensions for each training pair (uses output grid dimensions)
+            'pair_1_height': elements.Space(np.int32, (), 0, 30),
+            'pair_1_width': elements.Space(np.int32, (), 0, 30),
+            'pair_2_height': elements.Space(np.int32, (), 0, 30),
+            'pair_2_width': elements.Space(np.int32, (), 0, 30),
+            'pair_3_height': elements.Space(np.int32, (), 0, 30),
+            'pair_3_width': elements.Space(np.int32, (), 0, 30),
+            'pair_4_height': elements.Space(np.int32, (), 0, 30),
+            'pair_4_width': elements.Space(np.int32, (), 0, 30),
+            'pair_5_height': elements.Space(np.int32, (), 0, 30),
+            'pair_5_width': elements.Space(np.int32, (), 0, 30),
+            # Grid dimensions for the test target grid (ground truth)
+            'test_grid_height': elements.Space(np.int32, (), 0, 30),
+            'test_grid_width': elements.Space(np.int32, (), 0, 30),
             'num_valid_pairs': elements.Space(np.int32, (), 0, 5),  # How many of pair_1-5 are real (0-5)
             'valid_actions': elements.Space(np.int32, (4,), 0, 1),  # Mask for [paint, resize, done, set_color] matching action_type indices
             'current_color': elements.Space(np.int32, (), 0, 9),  # Currently selected color (0-9)
@@ -709,6 +723,22 @@ class ARC(embodied.Env):
         
         # Add mask information
         obs['num_valid_pairs'] = np.int32(self.num_valid_pairs)
+
+        # Add grid dimensions for each training pair (use output grid dims)
+        for i in range(5):
+            if i < self.num_valid_pairs:
+                out_h, out_w = self.train_outputs[i].shape
+                obs[f'pair_{i+1}_height'] = np.int32(min(out_h, 30))
+                obs[f'pair_{i+1}_width'] = np.int32(min(out_w, 30))
+            else:
+                # Zero out invalid pairs to match masking behavior for images
+                obs[f'pair_{i+1}_height'] = np.int32(0)
+                obs[f'pair_{i+1}_width'] = np.int32(0)
+
+        # Add grid dimensions for the test target grid (ground truth)
+        t_h, t_w = self.test_output.shape
+        obs['test_grid_height'] = np.int32(min(t_h, 30))
+        obs['test_grid_width'] = np.int32(min(t_w, 30))
 
         # Action availability mask: [paint, resize, done, set_color] matching action_type indices [0, 1, 2, 3]
         # Enforce: step 0 must be resize; step 1 must be set_color; painting requires resize and explicit color selection
