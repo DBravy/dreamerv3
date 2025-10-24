@@ -20,7 +20,7 @@ const ARC_COLORS = {
 
 const ACTION_TYPE_NAMES = {
     0: 'Paint',
-    1: 'Resize',    // Changed from 'Copy'
+    1: 'Resize',
     2: 'Done'
 };
 
@@ -483,7 +483,7 @@ function formatActionCompact(action) {
     if (action.action_type === 0) { // Paint
         const color = COLOR_NAMES[action.color];
         details = `@(${action.x},${action.y}) ${color}`;
-    } else if (action.action_type === 2) { // Resize
+    } else if (action.action_type === 1) { // Resize
         details = `to ${action.width}×${action.height}`;
     }
     
@@ -499,11 +499,9 @@ function formatActionDetailed(action) {
         const colorStyle = ARC_COLORS[action.color];
         parts.push(`<span>Position: (${action.x}, ${action.y})</span>`);
         parts.push(`<span>Color: <span style="display: inline-block; width: 12px; height: 12px; background: ${colorStyle}; border: 1px solid #666; vertical-align: middle; margin-right: 4px;"></span>${color}</span>`);
-    } else if (action.action_type === 1) { // Copy
-        parts.push(`<span>Copied test input to output</span>`);
-    } else if (action.action_type === 2) { // Resize
+    } else if (action.action_type === 1) { // Resize
         parts.push(`<span>New size: ${action.width}×${action.height}</span>`);
-    } else if (action.action_type === 3) { // Done
+    } else if (action.action_type === 2) { // Done
         parts.push(`<span>Episode terminated</span>`);
     }
     
@@ -517,7 +515,7 @@ function createActionSummary(actions) {
     }
     
     // Count action types
-    const counts = {0: 0, 1: 0, 2: 0, 3: 0};
+    const counts = {0: 0, 1: 0, 2: 0};
     actions.forEach(action => {
         counts[action.action_type] = (counts[action.action_type] || 0) + 1;
     });
@@ -529,16 +527,12 @@ function createActionSummary(actions) {
                 <span>${counts[0]} Paint${counts[0] !== 1 ? 's' : ''}</span>
             </div>
             <div class="action-count">
-                <span class="action-icon">📋</span>
-                <span>${counts[1]} Copy</span>
-            </div>
-            <div class="action-count">
                 <span class="action-icon">📐</span>
-                <span>${counts[2]} Resize${counts[2] !== 1 ? 's' : ''}</span>
+                <span>${counts[1]} Resize${counts[1] !== 1 ? 's' : ''}</span>
             </div>
             <div class="action-count">
                 <span class="action-icon">✅</span>
-                <span>${counts[3]} Done</span>
+                <span>${counts[2]} Done</span>
             </div>
         </div>
     `;
