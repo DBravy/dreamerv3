@@ -545,7 +545,7 @@ class ARC(embodied.Env):
           - paint is only available AFTER resize is performed (0 before resize, 1 after)
           - resize can only be used once as the first action (1 on first step, 0 after)
           - set_color is always available (1)
-          - done is always available (1)
+          - done is only available after 10 steps (0 before step 10, 1 after)
         - valid_positions: [30, 30] array masking spatial positions for painting
           - 1 = valid position (inside grid boundaries AND not yet painted)
           - 0 = invalid position (outside grid boundaries OR already painted)
@@ -577,7 +577,7 @@ class ARC(embodied.Env):
             1 if self.has_resized else 0,  # paint only allowed AFTER resize
             0 if self.has_resized else 1,  # resize only allowed as first action
             1,                              # set_color always allowed
-            1,                              # done always allowed
+            1 if self.step_count >= 10 else 0,  # done only allowed after 10 steps
         ], dtype=np.int32)
         
         # Add current color to observation
