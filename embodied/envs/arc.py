@@ -97,6 +97,9 @@ class ARC(embodied.Env):
         # NEW: Track current selected color
         self.current_color = 0  # Default to black (color 0)
         
+        # NEW: Track which colors have been selected (for reward purposes)
+        self.selected_colors = set()  # Colors that have been chosen at least once
+        
         # Track action validity
         self.last_action_valid = True
         self.invalid_action_count = 0
@@ -224,6 +227,9 @@ class ARC(embodied.Env):
         if action['reset'] or self.current_puzzle is None:
             return self._reset()
         
+        # Track the previous set of selected colors (before action execution)
+        previous_selected_colors = self.selected_colors.copy()
+        
         # Store action in history before executing
         action_record = {
             'step': self.step_count,
@@ -241,8 +247,18 @@ class ARC(embodied.Env):
         self._execute_action(action)
         self.step_count += 1
         
-        # Calculate reward (includes penalty for invalid actions)
-        reward = self._calculate_reward()
+        # Check if this was a new useful color selection
+        new_useful_color = False
+        if action['action_type'] == 3:  # Set color action
+            selected_color = int(action['color'])
+            # Check if this is a new color (not previously selected)
+            if selected_color not in previous_selected_colors:
+                # Check if this color appears in the target output
+                if np.any(self.test_output == selected_color):
+                    new_useful_color = True
+        
+        # Calculate reward (includes penalty for invalid actions and bonus for useful colors)
+        reward = self._calculate_reward(new_useful_color)
         
         # Check if done
         is_done = (
@@ -320,6 +336,8 @@ class ARC(embodied.Env):
         
         # NEW: Reset color to default (black)
         self.current_color = 0
+        self.selected_colors = set()  # Reset selected colors tracking
+        self.selected_colors.add(0)  # Black is selected by default
         
         # Reset validity tracking
         self.last_action_valid = True
@@ -412,11 +430,15 @@ class ARC(embodied.Env):
         elif action_type == 3:  # Set color
             # Update the current color
             color = int(action['color'])
-            self.current_color = np.clip(color, 0, 9)  # Ensure color is in valid range
+            new_color = np.clip(color, 0, 9)  # Ensure color is in valid range
+            self.current_color = new_color
+            
+            # Track this color as selected (for reward calculation)
+            self.selected_colors.add(new_color)
         
         # action_type == 2 is "done", no grid modification (always valid)
     
-    def _calculate_reward(self):
+    def _calculate_reward(self, new_useful_color=False):
         """
         Reward based on similarity to ground truth and size matching.
         
@@ -426,7 +448,8 @@ class ARC(embodied.Env):
            - Full credit for correct position + correct color
            - Partial credit (40%) for correct color in wrong position
         3. Bonus: Extra reward for exact size match
-        4. Penalty for invalid actions
+        4. Bonus: Small reward for selecting a new useful color
+        5. Penalty for invalid actions
         """
         target_h, target_w = self.test_output.shape
         current_h, current_w = self.current_output.shape
@@ -478,11 +501,15 @@ class ARC(embodied.Env):
         # Component 3: Exact size bonus (0 or 0.1)
         exact_size_bonus = 0.1 if (current_h == target_h and current_w == target_w) else 0.0
         
-        # Component 4: Invalid action penalty
+        # Component 4: Useful color selection bonus (0 or 0.02)
+        # Small reward for selecting a color that appears in the target
+        color_selection_bonus = 0.02 if new_useful_color else 0.0
+        
+        # Component 5: Invalid action penalty
         invalid_penalty = -self.invalid_penalty if not self.last_action_valid else 0.0
         
         # Total reward
-        reward = size_accuracy + content_accuracy + exact_size_bonus + invalid_penalty
+        reward = size_accuracy + content_accuracy + exact_size_bonus + color_selection_bonus + invalid_penalty
         
         return float(reward)
     
