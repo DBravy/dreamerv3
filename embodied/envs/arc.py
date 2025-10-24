@@ -110,8 +110,9 @@ class ARC(embodied.Env):
             'paint_before_resize': 0
         }
         
-        # Track previous accuracy for delta rewards
-        self.previous_base_accuracy = 0.0
+        # Track previous accuracy for delta rewards (separate components)
+        self.previous_grid_size_accuracy = 0.0
+        self.previous_content_accuracy = 0.0
     
     def _load_puzzles(self):
         """Load ARC JSON files from the specified version and split directory."""
@@ -261,14 +262,16 @@ class ARC(embodied.Env):
                     new_useful_color = True
         
         # Calculate reward (delta-based: improvement + one-time bonuses/penalties)
-        reward, current_base_accuracy = self._calculate_reward(new_useful_color)
+        reward, current_grid_size_accuracy, current_content_accuracy = self._calculate_reward(new_useful_color)
         
         # Add reward to the action record
         action_record['reward'] = float(reward)
-        action_record['base_accuracy'] = float(current_base_accuracy)
+        action_record['grid_size_accuracy'] = float(current_grid_size_accuracy)
+        action_record['content_accuracy'] = float(current_content_accuracy)
         
         # Update tracked accuracy for next step's delta calculation
-        self.previous_base_accuracy = current_base_accuracy
+        self.previous_grid_size_accuracy = current_grid_size_accuracy
+        self.previous_content_accuracy = current_content_accuracy
         
         # Check if done
         is_done = (
@@ -335,8 +338,8 @@ class ARC(embodied.Env):
         self.test_input = np.array(test_pair['input'], dtype=np.uint8)
         self.test_output = np.array(test_pair['output'], dtype=np.uint8)
         
-        # Initialize current output as empty grid (same size as test input)
-        self.current_output = np.zeros_like(self.test_input)
+        # Initialize current output as blank 3x3 grid
+        self.current_output = np.zeros((3, 3), dtype=np.uint8)
         
         # Reset episode state
         self.step_count = 0
@@ -359,10 +362,11 @@ class ARC(embodied.Env):
             'paint_before_resize': 0
         }
         
-        # Initialize previous_base_accuracy to starting grid accuracy
+        # Initialize accuracy tracking to starting grid state
         # This ensures the first action is rewarded based on improvement from initial state
-        _, initial_base_accuracy = self._calculate_reward(new_useful_color=False)
-        self.previous_base_accuracy = initial_base_accuracy
+        _, initial_grid_size_accuracy, initial_content_accuracy = self._calculate_reward(new_useful_color=False)
+        self.previous_grid_size_accuracy = initial_grid_size_accuracy
+        self.previous_content_accuracy = initial_content_accuracy
         
         # Return initial observation
         obs = self._get_observation()
@@ -457,35 +461,49 @@ class ARC(embodied.Env):
         """
         Reward based on similarity to ground truth and size matching.
         
-        DELTA REWARD SYSTEM:
-        - Base accuracy (size + content + exact size bonus) is tracked
-        - Reward = improvement in base accuracy + one-time bonuses/penalties
-        - This prevents "do nothing" strategies from accumulating reward
+        DELTA REWARD SYSTEM WITH SEPARATE COMPONENTS:
+        - Grid size accuracy and content accuracy are tracked SEPARATELY
+        - Each component gives independent delta rewards (improvement from previous step)
+        - Both components are scaled to 0-1.0 range for equal importance
+        - This allows the agent to be rewarded for improvements in either dimension
         
         Reward components:
-        1. Size accuracy: Reward for getting closer to correct dimensions
-        2. Content accuracy: Percentage of correct cells (in overlapping region)
+        1. Grid size accuracy (0 to 1.0): Dense reward for getting closer to correct dimensions
+           - Height accuracy: 1.0 - |current_h - target_h| / 30
+           - Width accuracy: 1.0 - |current_w - target_w| / 30
+           - Combined: (height_accuracy + width_accuracy) / 2
+           - Getting exact height OR exact width gives 0.5 accuracy (half credit)
+           - Getting both gives 1.0 accuracy (full credit)
+        
+        2. Content accuracy (0 to 1.0): Percentage of correct cells in overlapping region
            - Full credit for correct position + correct color
            - Partial credit (40%) for correct color in wrong position
-        3. Bonus: Extra reward for exact size match
-        4. Bonus: Small reward for selecting a new useful color (one-time)
-        5. Penalty for invalid actions (one-time)
+           - Scaled to 0-1.0 range
+        
+        3. Bonus: Small reward for selecting a new useful color (one-time)
+        4. Penalty: For invalid actions only (not for wrong grid size)
         
         Returns:
-            tuple: (reward, current_base_accuracy)
+            tuple: (reward, current_grid_size_accuracy, current_content_accuracy)
         """
         target_h, target_w = self.test_output.shape
         current_h, current_w = self.current_output.shape
         
-        # Component 1: Size accuracy (0 to 0.3)
-        # Distance from correct size (Manhattan distance normalized)
-        h_diff = abs(current_h - target_h)
-        w_diff = abs(current_w - target_w)
-        max_diff = 30 + 30  # Maximum possible difference
-        size_distance = (h_diff + w_diff) / max_diff
-        size_accuracy = (1.0 - size_distance) * 0.3
+        # ===== Component 1: Grid Size Accuracy (0 to 1.0) =====
+        # Dense reward that judges height and width separately
+        # Each dimension contributes 0.5 to the total (so 0.5 + 0.5 = 1.0 max)
         
-        # Component 2: Content accuracy (0 to 0.6)
+        # Height accuracy: 1.0 if exact match, decreases linearly with distance
+        height_accuracy = max(0.0, 1.0 - abs(current_h - target_h) / 30.0)
+        
+        # Width accuracy: 1.0 if exact match, decreases linearly with distance
+        width_accuracy = max(0.0, 1.0 - abs(current_w - target_w) / 30.0)
+        
+        # Combined grid size accuracy (average of height and width)
+        # This means: exact height only = 0.5, exact width only = 0.5, both = 1.0
+        grid_size_accuracy = (height_accuracy + width_accuracy) / 2.0
+        
+        # ===== Component 2: Content Accuracy (0 to 1.0) =====
         # Calculate accuracy on the overlapping region
         min_h = min(current_h, target_h)
         min_w = min(current_w, target_w)
@@ -514,31 +532,33 @@ class ARC(embodied.Env):
             wrong_position_matches = color_matches - overlap_correct
             
             # Reward: full credit for exact matches, 40% credit for color-only matches
-            # This keeps total content accuracy in range 0 to 0.6
-            exact_match_reward = (overlap_correct / self.test_output.size) * 0.6
-            color_match_reward = (wrong_position_matches / self.test_output.size) * 0.6 * 0.4
+            # Scaled to 0-1.0 range (previously was 0-0.7)
+            exact_match_reward = (overlap_correct / self.test_output.size)
+            color_match_reward = (wrong_position_matches / self.test_output.size) * 0.4
             content_accuracy = exact_match_reward + color_match_reward
         else:
             content_accuracy = 0.0
         
-        # Component 3: Exact size bonus (0 or 0.1)
-        exact_size_bonus = 0.1 if (current_h == target_h and current_w == target_w) else 0.0
+        # ===== Delta Rewards for Each Component =====
+        # Each component gives reward based on improvement from previous step
+        grid_size_improvement = grid_size_accuracy - self.previous_grid_size_accuracy
+        content_improvement = content_accuracy - self.previous_content_accuracy
         
-        # Base accuracy (this is what we track for delta rewards)
-        current_base_accuracy = size_accuracy + content_accuracy + exact_size_bonus
-        
-        # Component 4: Useful color selection bonus (0 or 0.02) - ONE-TIME BONUS
+        # ===== One-Time Bonuses and Penalties =====
+        # Component 3: Useful color selection bonus (0 or 0.02) - ONE-TIME BONUS
         # Small reward for selecting a color that appears in the target
         color_selection_bonus = 0.02 if new_useful_color else 0.0
         
-        # Component 5: Invalid action penalty - ONE-TIME PENALTY
+        # Component 4: Invalid action penalty - ONE-TIME PENALTY
+        # Only for invalid actions, NOT for wrong grid size
         invalid_penalty = -self.invalid_penalty if not self.last_action_valid else 0.0
         
-        # Delta reward: improvement + one-time bonuses/penalties
-        improvement = current_base_accuracy - self.previous_base_accuracy
-        reward = improvement + color_selection_bonus + invalid_penalty
+        # ===== Final Reward =====
+        # Sum of both improvement components plus bonuses/penalties
+        # Both grid size and content can contribute equally to reward
+        reward = grid_size_improvement + content_improvement + color_selection_bonus + invalid_penalty
         
-        return float(reward), float(current_base_accuracy)
+        return float(reward), float(grid_size_accuracy), float(content_accuracy)
     
     def _get_observation(self):
         """
