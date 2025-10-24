@@ -135,7 +135,8 @@ def monitor_training():
                                 
                                 # Extract end-of-episode accuracy from final reward (0-1) -> percentage (0-100)
                                 # Try multiple possible metric names for rewards
-                                reward_keys = ['episode/final_reward', 'episode/reward', 'reward', 'episode_reward']
+                                # 'episode/score' is the primary DreamerV3 metric for episode rewards
+                                reward_keys = ['episode/score', 'episode/final_reward', 'episode/reward', 'reward', 'episode_reward']
                                 reward_value = None
                                 
                                 for key in reward_keys:
@@ -175,12 +176,36 @@ def monitor_training():
                             except json.JSONDecodeError:
                                 continue
             
-            # Read scores if available
+            # Read scores if available (this contains episode/score metric)
             if scores_file.exists():
                 with open(scores_file, 'r') as f:
                     f.seek(last_scores_position)
                     new_lines = f.readlines()
                     last_scores_position = f.tell()
+                    
+                    for line in new_lines:
+                        if line.strip():
+                            try:
+                                score_data = json.loads(line)
+                                
+                                # Process score data - usually just contains step and episode/score
+                                if 'step' in score_data and 'episode/score' in score_data:
+                                    step = score_data['step']
+                                    reward_value = float(score_data['episode/score'])
+                                    
+                                    # Check if we already have data for this step from metrics.jsonl
+                                    # If not, add it from scores.jsonl
+                                    if not metrics_data['steps'] or step not in metrics_data['steps']:
+                                        metrics_data['steps'].append(step)
+                                        metrics_data['rewards'].append(reward_value)
+                                        accuracy_percent = reward_value * 100.0
+                                        accuracy_percent = max(0.0, min(100.0, accuracy_percent))
+                                        metrics_data['accuracies'].append(accuracy_percent)
+                                        metrics_data['timestamps'].append(time.time())
+                                        print(f"DEBUG: (from scores.jsonl) Step {step}, Reward: {reward_value:.3f}, Accuracy: {accuracy_percent:.1f}%")
+                                    
+                            except json.JSONDecodeError:
+                                continue
             
             # Check for updated episode grids (based on file modification time)
             if grids_file.exists():
