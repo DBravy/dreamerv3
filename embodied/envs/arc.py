@@ -466,30 +466,17 @@ class ARC(embodied.Env):
         """
         Reward based on similarity to ground truth and size matching.
         
-        DELTA REWARD SYSTEM WITH SEPARATE COMPONENTS:
+        PAINTING REWARD SYSTEM:
+        - When agent paints, reward is based on:
+          1. Correct color: 0.5 base reward
+          2. Distance to nearest correct placement: 0 to 0.5 additional reward (exponential)
+          - Wrong color: 0 reward
+          - Correct color at correct position: 1.0 reward
+          - Correct color at wrong position: 0.5 to 1.0 based on exponential distance decay
+        
+        For non-paint actions (resize, set_color, done):
         - Grid size accuracy and content accuracy are tracked SEPARATELY
         - Each component gives independent delta rewards (improvement from previous step)
-        - Both components are scaled to 0-1.0 range for equal importance
-        - This allows the agent to be rewarded for improvements in either dimension
-        
-        Reward components:
-        1. Grid size accuracy (0 to 1.0): Dense reward with non-linear curve
-           - Height accuracy: (1.0 - |current_h - target_h| / 30) ** exponent
-           - Width accuracy: (1.0 - |current_w - target_w| / 30) ** exponent
-           - Combined: (height_accuracy + width_accuracy) / 2
-           - Non-linear curve (default exponent=2.0) makes being close to target more valuable:
-             * Far from target (e.g. 30→29): small reward improvement
-             * Close to target (e.g. 4→3): large reward improvement
-           - Getting exact height OR exact width gives 0.5 accuracy (half credit)
-           - Getting both gives 1.0 accuracy (full credit)
-        
-        2. Content accuracy (0 to 1.0): Percentage of correct cells in overlapping region
-           - Full credit for correct position + correct color
-           - Partial credit (40%) for correct color in wrong position
-           - Scaled to 0-1.0 range
-        
-        3. Bonus: Small reward for selecting a new useful color (one-time)
-        4. Penalty: For invalid actions only (not for wrong grid size)
         
         Returns:
             tuple: (reward, current_grid_size_accuracy, current_content_accuracy)
@@ -497,24 +484,65 @@ class ARC(embodied.Env):
         target_h, target_w = self.test_output.shape
         current_h, current_w = self.current_output.shape
         
+        # Check if the last action was a paint action
+        was_paint_action = False
+        paint_reward = 0.0
+        
+        if len(self.action_history) > 0:
+            last_action = self.action_history[-1]
+            if last_action['action_type'] == 0:  # Paint action
+                was_paint_action = True
+                
+                # Get the painted position and color
+                painted_x = last_action['x']
+                painted_y = last_action['y']
+                painted_color = last_action['current_color']
+                
+                # Check if this color exists in the target grid
+                target_has_color = np.any(self.test_output == painted_color)
+                
+                if not target_has_color:
+                    # Wrong color (not in target) → 0 reward
+                    paint_reward = 0.0
+                else:
+                    # Correct color (exists in target) → base 0.5 reward
+                    paint_reward = 0.5
+                    
+                    # Find the nearest position in target grid with this color
+                    # Get all positions with this color in the target
+                    target_positions = np.argwhere(self.test_output == painted_color)
+                    
+                    if len(target_positions) > 0:
+                        # Calculate Manhattan distance to each target position
+                        distances = np.abs(target_positions - np.array([painted_y, painted_x])).sum(axis=1)
+                        min_distance = distances.min()
+                        
+                        # Exponential distance reward: 0.5 * e^(-lambda * distance)
+                        # lambda controls the steepness (higher = steeper curve)
+                        # We want: far away = small reward, close = large reward
+                        # At distance 0: e^0 = 1, so reward = 0.5 * 1 = 0.5 additional
+                        # At large distance: e^(-large) ≈ 0, so reward ≈ 0 additional
+                        
+                        # Use lambda = 0.3 for moderate exponential decay
+                        # This makes each step closer significantly more valuable when close
+                        distance_lambda = 0.3
+                        distance_reward = 0.5 * np.exp(-distance_lambda * min_distance)
+                        
+                        paint_reward += distance_reward
+        
         # ===== Component 1: Grid Size Accuracy (0 to 1.0) =====
         # Dense reward that judges height and width separately
         # Uses a non-linear curve to make being close to the target more valuable
-        # Each dimension contributes 0.5 to the total (so 0.5 + 0.5 = 1.0 max)
         
         # Calculate linear accuracy (1.0 at exact match, 0.0 at max distance)
         height_linear = max(0.0, 1.0 - abs(current_h - target_h) / 30.0)
         width_linear = max(0.0, 1.0 - abs(current_w - target_w) / 30.0)
         
         # Apply non-linear curve using the exponent
-        # exponent = 1.0: linear (each step equally valuable)
-        # exponent = 2.0: quadratic (being close is much more valuable)
-        # exponent > 2.0: even steeper (heavily rewards being very close)
         height_accuracy = height_linear ** self.size_reward_exponent
         width_accuracy = width_linear ** self.size_reward_exponent
         
         # Combined grid size accuracy (average of height and width)
-        # This means: exact height only = 0.5, exact width only = 0.5, both = 1.0
         grid_size_accuracy = (height_accuracy + width_accuracy) / 2.0
         
         # ===== Component 2: Content Accuracy (0 to 1.0) =====
@@ -530,47 +558,40 @@ class ARC(embodied.Env):
             ).sum()
             
             # Partial credit: correct color but wrong position
-            # Count how many of each color appear in both grids
             current_overlap = self.current_output[:min_h, :min_w]
             target_overlap = self.test_output[:min_h, :min_w]
             
-            # For each color, find the minimum count between current and target
-            # This gives us the maximum number of correct color matches possible
             color_matches = 0
             for color in range(10):  # Colors 0-9
                 current_count = (current_overlap == color).sum()
                 target_count = (target_overlap == color).sum()
                 color_matches += min(current_count, target_count)
             
-            # Subtract the exact matches to get wrong-position matches
             wrong_position_matches = color_matches - overlap_correct
             
             # Reward: full credit for exact matches, 40% credit for color-only matches
-            # Scaled to 0-1.0 range (previously was 0-0.7)
             exact_match_reward = (overlap_correct / self.test_output.size)
             color_match_reward = (wrong_position_matches / self.test_output.size) * 0.4
             content_accuracy = exact_match_reward + color_match_reward
         else:
             content_accuracy = 0.0
         
-        # ===== Delta Rewards for Each Component =====
-        # Each component gives reward based on improvement from previous step
-        grid_size_improvement = grid_size_accuracy - self.previous_grid_size_accuracy
-        content_improvement = content_accuracy - self.previous_content_accuracy
-        
-        # ===== One-Time Bonuses and Penalties =====
-        # Component 3: Useful color selection bonus (0 or 0.02) - ONE-TIME BONUS
-        # Small reward for selecting a color that appears in the target
-        color_selection_bonus = 0.02 if new_useful_color else 0.0
-        
-        # Component 4: Invalid action penalty - ONE-TIME PENALTY
-        # Only for invalid actions, NOT for wrong grid size
-        invalid_penalty = -self.invalid_penalty if not self.last_action_valid else 0.0
-        
-        # ===== Final Reward =====
-        # Sum of both improvement components plus bonuses/penalties
-        # Both grid size and content can contribute equally to reward
-        reward = grid_size_improvement + content_improvement + color_selection_bonus + invalid_penalty
+        # ===== Calculate Final Reward =====
+        if was_paint_action:
+            # For paint actions, use the direct paint reward
+            reward = paint_reward
+        else:
+            # For non-paint actions (resize, set_color, done), use delta rewards
+            grid_size_improvement = grid_size_accuracy - self.previous_grid_size_accuracy
+            content_improvement = content_accuracy - self.previous_content_accuracy
+            
+            # Color selection bonus (one-time)
+            color_selection_bonus = 0.02 if new_useful_color else 0.0
+            
+            # Invalid action penalty
+            invalid_penalty = -self.invalid_penalty if not self.last_action_valid else 0.0
+            
+            reward = grid_size_improvement + content_improvement + color_selection_bonus + invalid_penalty
         
         return float(reward), float(grid_size_accuracy), float(content_accuracy)
     
