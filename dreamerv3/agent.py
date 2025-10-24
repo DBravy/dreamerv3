@@ -200,6 +200,48 @@ class Agent(embodied.jax.Agent):
                 policy['y'].logits = y_masked_logits
 
     act = sample(policy)
+
+    # Ensure paint never targets an already painted cell: if the sampled (x, y)
+    # is invalid according to valid_positions, reselect the most probable valid
+    # coordinate using the product of x and y marginals.
+    if 'valid_positions' in obs and 'x' in policy and 'y' in policy and 'action_type' in act:
+      vp = f32(obs['valid_positions'])  # (B, 30, 30), 1 for valid, 0 for invalid
+      B = vp.shape[0]
+      # Current sampled selections
+      sel_x = i32(act['x'])
+      sel_y = i32(act['y'])
+      atype = i32(act['action_type'])
+      # Clip in range [0, 29] to be safe
+      sel_x = jnp.clip(sel_x, 0, 29)
+      sel_y = jnp.clip(sel_y, 0, 29)
+      batch_idx = jnp.arange(B)
+      chosen_valid = vp[batch_idx, sel_y, sel_x] > 0
+      # Only adjust when painting and chosen cell is invalid
+      need_adjust = (atype == 0) & (~chosen_valid)
+
+      # Build joint probability p(x, y) = p(x) * p(y)
+      def get_logits(dist):
+        return dist.dist.logits if hasattr(dist, 'dist') else dist.logits
+      x_logits = get_logits(policy['x'])  # (B, 30)
+      y_logits = get_logits(policy['y'])  # (B, 30)
+      x_prob = jax.nn.softmax(x_logits)
+      y_prob = jax.nn.softmax(y_logits)
+      joint = x_prob[:, None, :] * y_prob[:, :, None]  # (B, 30, 30)
+      # Mask invalid cells
+      masked_joint = joint * vp
+      # Argmax over flattened grid
+      flat = masked_joint.reshape((B, -1))
+      best_flat_idx = jnp.argmax(flat, axis=1)
+      best_y, best_x = jnp.divmod(best_flat_idx, 30)
+      best_x = i32(best_x)
+      best_y = i32(best_y)
+      # If there are no valid cells (rare), keep the original sample
+      any_valid = (vp.sum(axis=(1, 2)) > 0)
+      repl_x = jnp.where(any_valid, best_x, sel_x)
+      repl_y = jnp.where(any_valid, best_y, sel_y)
+      # Apply replacements only where adjustment is needed
+      act['x'] = jnp.where(need_adjust, repl_x, act['x'])
+      act['y'] = jnp.where(need_adjust, repl_y, act['y'])
     out = {}
     out['finite'] = elements.tree.flatdict(jax.tree.map(
         lambda x: jnp.isfinite(x).all(range(1, x.ndim)),
