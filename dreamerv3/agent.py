@@ -71,6 +71,18 @@ class Agent(embodied.jax.Agent):
     self.pol = embodied.jax.MLPHead(
         act_space, outs, **config.policy, name='pol')
 
+    # Selection heads: discrete distributions conditioned on feat2tensor
+    # to select spatial positions, sizes, and colors.
+    sel_spaces = {
+        'x': elements.Space(np.int32, (), 0, 30),
+        'y': elements.Space(np.int32, (), 0, 30),
+        'width': elements.Space(np.int32, (), 0, 30),
+        'height': elements.Space(np.int32, (), 0, 30),
+        'color': elements.Space(np.int32, (), 0, 10),
+    }
+    sel_outs = {k: d1 for k in sel_spaces.keys()}  # categorical for all
+    self.sel = embodied.jax.MLPHead(sel_spaces, sel_outs, **config.policy, name='sel')
+
     self.val = embodied.jax.MLPHead(scalar, **config.value, name='val')
     self.slowval = embodied.jax.SlowModel(
         embodied.jax.MLPHead(scalar, **config.value, name='slowval'),
@@ -81,7 +93,7 @@ class Agent(embodied.jax.Agent):
     self.advnorm = embodied.jax.Normalize(**config.advnorm, name='advnorm')
 
     self.modules = [
-        self.dyn, self.enc, self.dec, self.rew, self.con, self.pol, self.val]
+        self.dyn, self.enc, self.dec, self.rew, self.con, self.pol, self.sel, self.val]
     self.opt = embodied.jax.Optimizer(
         self.modules, self._make_opt(**config.opt), summary_depth=1,
         name='opt')
@@ -93,7 +105,7 @@ class Agent(embodied.jax.Agent):
 
   @property
   def policy_keys(self):
-    return '^(enc|dyn|dec|pol)/'
+    return '^(enc|dyn|dec|pol|sel)/'
 
   @property
   def ext_space(self):
@@ -132,6 +144,9 @@ class Agent(embodied.jax.Agent):
     if dec_carry:
       dec_carry, dec_entry, recons = self.dec(dec_carry, feat, reset, **kw)
     policy = self.pol(self.feat2tensor(feat), bdims=1)
+    # Merge in selection heads derived from features
+    sel = self.sel(self.feat2tensor(feat), bdims=1)
+    policy.update(sel)
 
     # Apply action_type mask if provided
     if 'valid_actions' in obs and 'action_type' in policy:
@@ -250,7 +265,12 @@ class Agent(embodied.jax.Agent):
     K = min(self.config.imag_last or T, T)
     H = self.config.imag_length
     starts = self.dyn.starts(dyn_entries, dyn_carry, K)
-    policyfn = lambda feat: sample(self.pol(self.feat2tensor(feat), 1))
+    def policyfn(feat):
+      inp = self.feat2tensor(feat)
+      base = self.pol(inp, 1)
+      selp = self.sel(inp, 1)
+      merged = {**base, **selp}
+      return sample(merged)
     _, imgfeat, imgprevact = self.dyn.imagine(starts, policyfn, H, training)
     first = jax.tree.map(
         lambda x: x[:, -K:].reshape((B * K, 1, *x.shape[2:])), repfeat)
@@ -261,11 +281,15 @@ class Agent(embodied.jax.Agent):
     assert all(x.shape[:2] == (B * K, H + 1) for x in jax.tree.leaves(imgfeat))
     assert all(x.shape[:2] == (B * K, H + 1) for x in jax.tree.leaves(imgact))
     inp = self.feat2tensor(imgfeat)
+    # Use merged policy (base + selection heads) for imagination loss
+    base_pol = self.pol(inp, 2)
+    sel_pol = self.sel(inp, 2)
+    merged_pol = {**base_pol, **sel_pol}
     los, imgloss_out, mets = imag_loss(
         imgact,
         self.rew(inp, 2).pred(),
         self.con(inp, 2).prob(1),
-        self.pol(inp, 2),
+        merged_pol,
         self.val(inp, 2),
         self.slowval(inp, 2),
         self.retnorm, self.valnorm, self.advnorm,
@@ -471,10 +495,34 @@ def imag_loss(
   adv = (ret - tarval[:, :-1]) / rscale
   aoffset, ascale = advnorm(adv, update)
   adv_normed = (adv - aoffset) / ascale
-  logpi = sum([v.logp(sg(act[k]))[:, :-1] for k, v in policy.items()])
-  ents = {k: v.entropy()[:, :-1] for k, v in policy.items()}
+  # Gate contributions by action_type for selection heads.
+  # action_type: 0=paint -> use x,y; 1=resize -> use width,height; 3=set_color -> use color
+  atype = sg(act['action_type'])[:, :-1]
+  paint_mask = (atype == 0)
+  resize_mask = (atype == 1)
+  color_mask = (atype == 3)
+
+  masked_logpis = []
+  masked_ents = []
+  for k, dist in policy.items():
+    lp = dist.logp(sg(act[k]))[:, :-1]
+    ent = dist.entropy()[:, :-1]
+    if k in ('x', 'y'):
+      m = paint_mask
+    elif k in ('width', 'height'):
+      m = resize_mask
+    elif k == 'color':
+      m = color_mask
+    else:
+      # Always include other heads (e.g., action_type, reset)
+      m = jnp.ones_like(lp, dtype=bool)
+    m = m.astype(lp.dtype)
+    masked_logpis.append(lp * m)
+    masked_ents.append(ent * m)
+  logpi = sum(masked_logpis)
+  ent_sum = sum(masked_ents)
   policy_loss = sg(weight[:, :-1]) * -(
-      logpi * sg(adv_normed) + actent * sum(ents.values()))
+      logpi * sg(adv_normed) + actent * ent_sum)
   losses['policy'] = policy_loss
 
   voffset, vscale = valnorm(ret, update)
@@ -498,11 +546,22 @@ def imag_loss(
   metrics['ret_min'] = ret_normed.min()
   metrics['ret_max'] = ret_normed.max()
   metrics['ret_rate'] = (jnp.abs(ret_normed) >= 1.0).mean()
-  for k in act:
-    metrics[f'ent/{k}'] = ents[k].mean()
+  for k, dist in policy.items():
+    ent = dist.entropy()[:, :-1]
+    if k in ('x', 'y'):
+      m = paint_mask
+    elif k in ('width', 'height'):
+      m = resize_mask
+    elif k == 'color':
+      m = color_mask
+    else:
+      m = jnp.ones_like(ent, dtype=bool)
+    m = m.astype(ent.dtype)
+    entm = (ent * m).mean()
+    metrics[f'ent/{k}'] = entm
     if hasattr(policy[k], 'minent'):
       lo, hi = policy[k].minent, policy[k].maxent
-      metrics[f'rand/{k}'] = (ents[k].mean() - lo) / (hi - lo)
+      metrics[f'rand/{k}'] = (entm - lo) / (hi - lo)
 
   outs = {}
   outs['ret'] = ret
