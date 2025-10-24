@@ -109,6 +109,9 @@ class ARC(embodied.Env):
             'paint_oob': 0,
             'paint_before_resize': 0
         }
+        
+        # Track previous accuracy for delta rewards
+        self.previous_base_accuracy = 0.0
     
     def _load_puzzles(self):
         """Load ARC JSON files from the specified version and split directory."""
@@ -257,8 +260,11 @@ class ARC(embodied.Env):
                 if np.any(self.test_output == selected_color):
                     new_useful_color = True
         
-        # Calculate reward (includes penalty for invalid actions and bonus for useful colors)
-        reward = self._calculate_reward(new_useful_color)
+        # Calculate reward (delta-based: improvement + one-time bonuses/penalties)
+        reward, current_base_accuracy = self._calculate_reward(new_useful_color)
+        
+        # Update tracked accuracy for next step's delta calculation
+        self.previous_base_accuracy = current_base_accuracy
         
         # Check if done
         is_done = (
@@ -348,6 +354,11 @@ class ARC(embodied.Env):
             'paint_oob': 0,
             'paint_before_resize': 0
         }
+        
+        # Initialize previous_base_accuracy to starting grid accuracy
+        # This ensures the first action is rewarded based on improvement from initial state
+        _, initial_base_accuracy = self._calculate_reward(new_useful_color=False)
+        self.previous_base_accuracy = initial_base_accuracy
         
         # Return initial observation
         obs = self._get_observation()
@@ -442,14 +453,22 @@ class ARC(embodied.Env):
         """
         Reward based on similarity to ground truth and size matching.
         
+        DELTA REWARD SYSTEM:
+        - Base accuracy (size + content + exact size bonus) is tracked
+        - Reward = improvement in base accuracy + one-time bonuses/penalties
+        - This prevents "do nothing" strategies from accumulating reward
+        
         Reward components:
         1. Size accuracy: Reward for getting closer to correct dimensions
         2. Content accuracy: Percentage of correct cells (in overlapping region)
            - Full credit for correct position + correct color
            - Partial credit (40%) for correct color in wrong position
         3. Bonus: Extra reward for exact size match
-        4. Bonus: Small reward for selecting a new useful color
-        5. Penalty for invalid actions
+        4. Bonus: Small reward for selecting a new useful color (one-time)
+        5. Penalty for invalid actions (one-time)
+        
+        Returns:
+            tuple: (reward, current_base_accuracy)
         """
         target_h, target_w = self.test_output.shape
         current_h, current_w = self.current_output.shape
@@ -501,17 +520,21 @@ class ARC(embodied.Env):
         # Component 3: Exact size bonus (0 or 0.1)
         exact_size_bonus = 0.1 if (current_h == target_h and current_w == target_w) else 0.0
         
-        # Component 4: Useful color selection bonus (0 or 0.02)
+        # Base accuracy (this is what we track for delta rewards)
+        current_base_accuracy = size_accuracy + content_accuracy + exact_size_bonus
+        
+        # Component 4: Useful color selection bonus (0 or 0.02) - ONE-TIME BONUS
         # Small reward for selecting a color that appears in the target
         color_selection_bonus = 0.02 if new_useful_color else 0.0
         
-        # Component 5: Invalid action penalty
+        # Component 5: Invalid action penalty - ONE-TIME PENALTY
         invalid_penalty = -self.invalid_penalty if not self.last_action_valid else 0.0
         
-        # Total reward
-        reward = size_accuracy + content_accuracy + exact_size_bonus + color_selection_bonus + invalid_penalty
+        # Delta reward: improvement + one-time bonuses/penalties
+        improvement = current_base_accuracy - self.previous_base_accuracy
+        reward = improvement + color_selection_bonus + invalid_penalty
         
-        return float(reward)
+        return float(reward), float(current_base_accuracy)
     
     def _get_observation(self):
         """
