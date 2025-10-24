@@ -174,8 +174,7 @@ function initCharts() {
                         display: true,
                         text: 'Reward'
                     },
-                    min: 0,
-                    max: 1
+                    beginAtZero: true
                 }
             }
         }
