@@ -94,14 +94,17 @@ class ARC(embodied.Env):
         self.painted_positions = set()  # Set of (x, y) tuples
         self.fixed_puzzle = None  # When repeat_single is True, hold onto the chosen puzzle
         
-        # NEW: Track action validity
+        # NEW: Track current selected color
+        self.current_color = 0  # Default to black (color 0)
+        
+        # Track action validity
         self.last_action_valid = True
         self.invalid_action_count = 0
         self.invalid_action_types = {
             'paint_duplicate': 0, 
             'resize_duplicate': 0, 
             'paint_oob': 0,
-            'paint_before_resize': 0  # NEW: Track attempts to paint before resizing
+            'paint_before_resize': 0
         }
     
     def _load_puzzles(self):
@@ -193,7 +196,8 @@ class ARC(embodied.Env):
             'test_pair': elements.Space(np.uint8, pair_shape),  # test_input | current_work (for policy to see current state)
             'target_pair': elements.Space(np.uint8, pair_shape),  # test_input | ground_truth (for world model to learn complete solution)
             'num_valid_pairs': elements.Space(np.int32, (), 0, 5),  # How many of pair_1-5 are real (0-5)
-            'valid_actions': elements.Space(np.int32, (3,), 0, 1),  # Mask for [paint, resize, done]
+            'valid_actions': elements.Space(np.int32, (4,), 0, 1),  # Mask for [paint, resize, set_color, done]
+            'current_color': elements.Space(np.int32, (), 0, 9),  # Currently selected color (0-9)
             'reward': elements.Space(np.float32),
             'is_first': elements.Space(bool),
             'is_last': elements.Space(bool),
@@ -205,10 +209,10 @@ class ARC(embodied.Env):
     def act_space(self):
         """Define action space for grid editing."""
         return {
-            'action_type': elements.Space(np.int32, (), 0, 3),  # 0:paint, 1:resize, 2:done
+            'action_type': elements.Space(np.int32, (), 0, 4),  # 0:paint, 1:resize, 2:done, 3:set_color
             'x': elements.Space(np.int32, (), 0, 30),
             'y': elements.Space(np.int32, (), 0, 30),
-            'color': elements.Space(np.int32, (), 0, 9),
+            'color': elements.Space(np.int32, (), 0, 9),  # Used only for set_color action
             'width': elements.Space(np.int32, (), 0, 30),   # Target width for resize
             'height': elements.Space(np.int32, (), 0, 30),  # Target height for resize
             'reset': elements.Space(bool),
@@ -229,6 +233,7 @@ class ARC(embodied.Env):
             'color': int(action['color']),
             'width': int(action['width']),
             'height': int(action['height']),
+            'current_color': int(self.current_color),  # Track what color was active
         }
         self.action_history.append(action_record)
         
@@ -313,7 +318,10 @@ class ARC(embodied.Env):
         self.has_resized = False
         self.painted_positions = set()
         
-        # NEW: Reset validity tracking
+        # NEW: Reset color to default (black)
+        self.current_color = 0
+        
+        # Reset validity tracking
         self.last_action_valid = True
         self.invalid_action_count = 0
         self.invalid_action_types = {
@@ -342,8 +350,8 @@ class ARC(embodied.Env):
         # Assume action is valid until proven otherwise
         self.last_action_valid = True
         
-        if action_type == 0:  # Paint
-            # NEW: Check if resize has been done first
+        if action_type == 0:  # Paint (using current_color)
+            # Check if resize has been done first
             if not self.has_resized:
                 self.last_action_valid = False
                 self.invalid_action_count += 1
@@ -360,16 +368,15 @@ class ARC(embodied.Env):
                 self.invalid_action_types['paint_oob'] += 1
                 return
             
-            # NEW: Check if position already painted
+            # Check if position already painted
             if (x, y) in self.painted_positions:
                 self.last_action_valid = False
                 self.invalid_action_count += 1
                 self.invalid_action_types['paint_duplicate'] += 1
                 return
             
-            # Valid paint action - execute it
-            color = int(action['color'])
-            self.current_output[y, x] = color  # NumPy arrays are [row, col] = [y, x]
+            # Valid paint action - execute it using current_color
+            self.current_output[y, x] = self.current_color  # NumPy arrays are [row, col] = [y, x]
             self.painted_positions.add((x, y))
         
         elif action_type == 1:  # Resize
@@ -401,6 +408,11 @@ class ARC(embodied.Env):
             # the grid dimensions have changed and positions may no longer be valid.
             # This allows repainting at the same coordinates in the new grid size.
             self.painted_positions.clear()
+        
+        elif action_type == 3:  # Set color
+            # Update the current color
+            color = int(action['color'])
+            self.current_color = np.clip(color, 0, 9)  # Ensure color is in valid range
         
         # action_type == 2 is "done", no grid modification (always valid)
     
@@ -479,15 +491,17 @@ class ARC(embodied.Env):
         Generate observation dict with all paired images.
         
         Action masking system:
-        - valid_actions: [3] array masking action types [paint, resize, done]
+        - valid_actions: [4] array masking action types [paint, resize, set_color, done]
           - paint is only available AFTER resize is performed (0 before resize, 1 after)
           - resize can only be used once as the first action (1 on first step, 0 after)
+          - set_color is always available (1)
           - done is always available (1)
         - valid_positions: [30, 30] array masking spatial positions for painting
           - 1 = valid position (inside grid boundaries AND not yet painted)
           - 0 = invalid position (outside grid boundaries OR already painted)
           - Coordinates are [y, x] = [row, col] to match NumPy convention
           - Updates dynamically when grid is resized
+        - current_color: scalar indicating the currently selected color (0-9)
         """
         obs = {}
         
@@ -507,15 +521,19 @@ class ARC(embodied.Env):
         # Add mask information
         obs['num_valid_pairs'] = np.int32(self.num_valid_pairs)
 
-        # Action availability mask: [paint, resize, done]
-        # Enforce: resize must be first action, then only paint or done allowed
+        # Action availability mask: [paint, resize, set_color, done]
+        # Enforce: resize must be first action, then only paint/set_color/done allowed
         obs['valid_actions'] = np.array([
             1 if self.has_resized else 0,  # paint only allowed AFTER resize
             0 if self.has_resized else 1,  # resize only allowed as first action
+            1,                              # set_color always allowed
             1,                              # done always allowed
         ], dtype=np.int32)
+        
+        # Add current color to observation
+        obs['current_color'] = np.int32(self.current_color)
 
-        # NEW: Spatial mask for valid paint positions
+        # Spatial mask for valid paint positions
         # Start with all positions marked as invalid (0)
         valid_positions = np.zeros((30, 30), dtype=np.int32)
         
@@ -586,7 +604,7 @@ class ARC(embodied.Env):
             'final_reward': float(final_reward),
             'steps': int(self.step_count),
             'actions': self.action_history,  # Complete action history
-            # NEW: Invalid action statistics
+            # Invalid action statistics
             'invalid_action_count': int(self.invalid_action_count),
             'invalid_action_types': self.invalid_action_types,
             'invalid_action_rate': float(self.invalid_action_count / max(1, self.step_count)),

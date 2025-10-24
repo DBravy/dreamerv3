@@ -21,7 +21,8 @@ const ARC_COLORS = {
 const ACTION_TYPE_NAMES = {
     0: 'Paint',
     1: 'Resize',
-    2: 'Done'
+    2: 'Done',
+    3: 'Set Color'  // NEW: Added set_color action type
 };
 
 const COLOR_NAMES = {
@@ -475,34 +476,42 @@ function calculateGridAccuracy(agentGrid, targetGrid) {
     return (correctCells / totalCells) * 100;
 }
 
-// Format action for display
+// Format action for display (compact version)
 function formatActionCompact(action) {
     const type = ACTION_TYPE_NAMES[action.action_type];
     let details = '';
     
-    if (action.action_type === 0) { // Paint
-        const color = COLOR_NAMES[action.color];
+    if (action.action_type === 0) { // Paint - now uses current_color
+        const color = COLOR_NAMES[action.current_color];
         details = `@(${action.x},${action.y}) ${color}`;
     } else if (action.action_type === 1) { // Resize
         details = `to ${action.width}×${action.height}`;
+    } else if (action.action_type === 3) { // Set Color - uses color parameter
+        const color = COLOR_NAMES[action.color];
+        details = `to ${color}`;
     }
     
     return `${type}${details ? ' ' + details : ''}`;
 }
 
+// Format action for display (detailed version)
 function formatActionDetailed(action) {
     const type = ACTION_TYPE_NAMES[action.action_type];
     const parts = [`<strong>${type}</strong>`];
     
-    if (action.action_type === 0) { // Paint
-        const color = COLOR_NAMES[action.color];
-        const colorStyle = ARC_COLORS[action.color];
+    if (action.action_type === 0) { // Paint - now uses current_color
+        const color = COLOR_NAMES[action.current_color];
+        const colorStyle = ARC_COLORS[action.current_color];
         parts.push(`<span>Position: (${action.x}, ${action.y})</span>`);
         parts.push(`<span>Color: <span style="display: inline-block; width: 12px; height: 12px; background: ${colorStyle}; border: 1px solid #666; vertical-align: middle; margin-right: 4px;"></span>${color}</span>`);
     } else if (action.action_type === 1) { // Resize
         parts.push(`<span>New size: ${action.width}×${action.height}</span>`);
     } else if (action.action_type === 2) { // Done
         parts.push(`<span>Episode terminated</span>`);
+    } else if (action.action_type === 3) { // Set Color - uses color parameter
+        const color = COLOR_NAMES[action.color];
+        const colorStyle = ARC_COLORS[action.color];
+        parts.push(`<span>Selected color: <span style="display: inline-block; width: 12px; height: 12px; background: ${colorStyle}; border: 1px solid #666; vertical-align: middle; margin-right: 4px;"></span>${color}</span>`);
     }
     
     return parts.join('<br>');
@@ -515,7 +524,7 @@ function createActionSummary(actions) {
     }
     
     // Count action types
-    const counts = {0: 0, 1: 0, 2: 0};
+    const counts = {0: 0, 1: 0, 2: 0, 3: 0};
     actions.forEach(action => {
         counts[action.action_type] = (counts[action.action_type] || 0) + 1;
     });
@@ -529,6 +538,10 @@ function createActionSummary(actions) {
             <div class="action-count">
                 <span class="action-icon">📐</span>
                 <span>${counts[1]} Resize${counts[1] !== 1 ? 's' : ''}</span>
+            </div>
+            <div class="action-count">
+                <span class="action-icon">🎨</span>
+                <span>${counts[3]} Color Change${counts[3] !== 1 ? 's' : ''}</span>
             </div>
             <div class="action-count">
                 <span class="action-icon">✅</span>
