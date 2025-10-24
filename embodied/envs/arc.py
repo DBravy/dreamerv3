@@ -370,8 +370,8 @@ class ARC(embodied.Env):
         # Initialize accuracy tracking to starting grid state
         # This ensures the first action is rewarded based on improvement from initial state
         _, initial_grid_size_accuracy, initial_content_accuracy = self._calculate_reward(new_useful_color=False)
-        self.previous_grid_size_accuracy = initial_grid_size_accuracy
-        self.previous_content_accuracy = initial_content_accuracy
+        self.previous_grid_size_accuracy = 0.0  # Start from zero
+        self.previous_content_accuracy = 0.0
         
         # Return initial observation
         obs = self._get_observation()
