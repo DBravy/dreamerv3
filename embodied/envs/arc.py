@@ -468,9 +468,11 @@ class ARC(embodied.Env):
         
         PAINTING REWARD SYSTEM:
         - When agent paints, reward is based on:
+          - Black (color 0): ALWAYS 0 reward (to discourage using black)
+          - Wrong color: 0 reward
+          - Correct color: 0.5 base reward + distance-based bonus
           1. Correct color: 0.5 base reward
           2. Distance to nearest correct placement: 0 to 0.5 additional reward (exponential)
-          - Wrong color: 0 reward
           - Correct color at correct position: 1.0 reward
           - Correct color at wrong position: 0.5 to 1.0 based on exponential distance decay
         
@@ -498,10 +500,11 @@ class ARC(embodied.Env):
                 painted_y = last_action['y']
                 painted_color = last_action['current_color']
                 
+                # Never reward painting with black (color 0)
+                if painted_color == 0:
+                    paint_reward = 0.0
                 # Check if this color exists in the target grid
-                target_has_color = np.any(self.test_output == painted_color)
-                
-                if not target_has_color:
+                elif not np.any(self.test_output == painted_color):
                     # Wrong color (not in target) → 0 reward
                     paint_reward = 0.0
                 else:
