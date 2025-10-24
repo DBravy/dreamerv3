@@ -579,7 +579,7 @@ class ARC(embodied.Env):
         # Enforce: resize must be first action, then only paint/set_color/done allowed
         obs['valid_actions'] = np.array([
             1 if self.has_resized else 0,  # [0] paint only allowed AFTER resize
-            0 if self.has_resized else 1,  # [1] resize only allowed as first action
+            1 if (self.step_count == 0 and not self.has_resized) else 0,  # [1] resize ONLY on step 0
             1 if self.step_count >= 10 else 0,  # [2] done only allowed after 10 steps
             1,                              # [3] set_color always allowed
         ], dtype=np.int32)
