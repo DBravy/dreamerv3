@@ -230,7 +230,7 @@ arc_v2_eval:
     enc.simple: {mults: [2, 3, 4, 4]}
 
 dmc_proprio:
-  <<: *size12m
+  <<: *size1m
   task: dmc_walker_walk
   env.dmc.image: False
   run: {steps: 1.1e6, train_ratio: 1024}

@@ -406,6 +406,19 @@ async function startTraining() {
             console.log('Training started successfully');
             isTraining = true;
             updateStatusUI(true);
+            
+            // Clear charts immediately for new training session
+            for (let chart of Object.values(charts)) {
+                chart.data.labels = [];
+                for (let dataset of chart.data.datasets) {
+                    dataset.data = [];
+                }
+                chart.update();
+            }
+            
+            // Clear grids display
+            const gridsContainer = document.getElementById('grids-container');
+            gridsContainer.innerHTML = '<div class="grids-empty">Start training to see episode reconstructions...</div>';
         } else {
             alert('Error starting training: ' + result.message);
         }

@@ -228,13 +228,24 @@ def monitor_training():
 
 def start_training_process(config='arc', custom_args=''):
     """Start the training process."""
-    global training_process, is_training, current_logdir, training_start_time, training_thread, log_monitor_thread, console_logs
+    global training_process, is_training, current_logdir, training_start_time, training_thread, log_monitor_thread, console_logs, metrics_data, latest_episode_grids
     
     if is_training:
         return {'status': 'error', 'message': 'Training already running'}
     
-    # Clear previous console logs
+    # Clear previous console logs and metrics data
     console_logs.clear()
+    
+    # Reset metrics data for new training session
+    metrics_data['steps'].clear()
+    metrics_data['accuracies'].clear()
+    metrics_data['rewards'].clear()
+    metrics_data['lengths'].clear()
+    metrics_data['train_loss'].clear()
+    metrics_data['timestamps'].clear()
+    
+    # Clear episode grids
+    latest_episode_grids = None
     
     # Create timestamp for logdir
     timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
