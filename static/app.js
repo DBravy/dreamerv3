@@ -556,7 +556,8 @@ function formatActionCompact(action) {
     
     if (action.action_type === 0) { // Paint - now uses current_color
         const color = COLOR_NAMES[action.current_color];
-        details = `@(${action.x},${action.y}) ${color}`;
+        // Display 1-based coordinates for human readability
+        details = `@(${action.x + 1},${action.y + 1}) ${color}`;
     } else if (action.action_type === 1) { // Resize
         // Add 1 to display actual dimensions (agent outputs 0-29, actual is 1-30)
         details = `to ${action.height + 1}×${action.width + 1}`;
@@ -576,7 +577,8 @@ function formatActionDetailed(action) {
     if (action.action_type === 0) { // Paint - now uses current_color
         const color = COLOR_NAMES[action.current_color];
         const colorStyle = ARC_COLORS[action.current_color];
-        parts.push(`<span>Position: (${action.x}, ${action.y})</span>`);
+        // Display 1-based coordinates for human readability
+        parts.push(`<span>Position: (${action.x + 1}, ${action.y + 1})</span>`);
         parts.push(`<span>Color: <span style="display: inline-block; width: 12px; height: 12px; background: ${colorStyle}; border: 1px solid #666; vertical-align: middle; margin-right: 4px;"></span>${color}</span>`);
     } else if (action.action_type === 1) { // Resize
         // Add 1 to display actual dimensions (agent outputs 0-29, actual is 1-30)

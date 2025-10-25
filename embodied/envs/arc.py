@@ -571,22 +571,26 @@ class ARC(embodied.Env):
             if last_action['action_type'] == 0:  # Paint action
                 was_paint_action = True
                 
-                # Get the painted position and color
-                painted_x = last_action['x']
-                painted_y = last_action['y']
-                painted_color = last_action['current_color']
-                
-                # NEW LOGIC: Only reward if BOTH color AND position are correct
-                # Check if position is within target grid bounds
-                if painted_y < target_h and painted_x < target_w:
-                    # Check if the color at this position matches the target
-                    if self.test_output[painted_y, painted_x] == painted_color:
-                        paint_reward = 1.0
-                    else:
-                        paint_reward = 0.0
+                # If the last paint action was invalid, apply invalid penalty and do not grant paint reward
+                if not self.last_action_valid:
+                    paint_reward = -self.invalid_penalty
                 else:
-                    # Position is out of bounds of target grid
-                    paint_reward = 0.0
+                    # Get the painted position and color
+                    painted_x = last_action['x']
+                    painted_y = last_action['y']
+                    painted_color = last_action['current_color']
+                    
+                    # Only reward if BOTH color AND position are correct
+                    # Check if position is within target grid bounds
+                    if painted_y < target_h and painted_x < target_w and painted_y >= 0 and painted_x >= 0:
+                        # Check if the color at this position matches the target
+                        if self.test_output[painted_y, painted_x] == painted_color:
+                            paint_reward = 1.0
+                        else:
+                            paint_reward = 0.0
+                    else:
+                        # Position is out of bounds of target grid
+                        paint_reward = 0.0
                 
                 # COMMENTED OUT: Previous reward logic with distance-based rewards
                 # # Never reward painting with black (color 0)
