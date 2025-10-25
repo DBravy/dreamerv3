@@ -250,8 +250,8 @@ class ARC(embodied.Env):
             'x': elements.Space(np.int32, (), 0, 30),
             'y': elements.Space(np.int32, (), 0, 30),
             'color': elements.Space(np.int32, (), 0, 9),  # Used only for set_color action
-            'width': elements.Space(np.int32, (), 0, 30),   # Target width for resize
-            'height': elements.Space(np.int32, (), 0, 30),  # Target height for resize
+            'width': elements.Space(np.int32, (), 0, 30),   # Target width for resize (0-29 output, maps to 1-30 actual)
+            'height': elements.Space(np.int32, (), 0, 30),  # Target height for resize (0-29 output, maps to 1-30 actual)
             'reset': elements.Space(bool),
         }
     
@@ -504,9 +504,10 @@ class ARC(embodied.Env):
                 return
             
             # Valid resize action - execute it
-            # Clip to valid range [1, 30], treating 0 as 1
-            new_height = int(np.clip(action['height'], 1, 30))
-            new_width = int(np.clip(action['width'], 1, 30))
+            # Agent outputs 0-29, add 1 to get actual dimensions 1-30
+            # This ensures no zero-dimensional grids and consistent encoding
+            new_height = int(np.clip(action['height'] + 1, 1, 30))
+            new_width = int(np.clip(action['width'] + 1, 1, 30))
             
             # Create new grid
             new_grid = np.zeros((new_height, new_width), dtype=np.uint8)
