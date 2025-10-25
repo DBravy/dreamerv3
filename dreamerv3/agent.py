@@ -21,6 +21,119 @@ concat = lambda xs, a: jax.tree.map(lambda *x: jnp.concatenate(x, a), *xs)
 isimage = lambda s: s.dtype == np.uint8 and len(s.shape) == 3
 
 
+def compute_color_target(target_pair):
+    """
+    Extract which colors appear in the target output.
+    
+    Args:
+        target_pair: (B, T, H, W*2, 3) RGB image where right half is the target output
+    
+    Returns:
+        target_dist: (B, T, 10) - probability distribution over colors 0-9
+    """
+    # Extract right half (target output)
+    B, T, H, W2, C = target_pair.shape
+    W = W2 // 2
+    target_output = target_pair[:, :, :, W:, :]  # (B, T, H, W, 3)
+    
+    # Convert RGB to color indices (0-9)
+    # Define ARC color palette as array
+    color_palette = jnp.array([
+        [0, 0, 0],           # 0: Black
+        [0, 116, 217],       # 1: Blue
+        [255, 65, 54],       # 2: Red
+        [46, 204, 64],       # 3: Green
+        [255, 220, 0],       # 4: Yellow
+        [170, 170, 170],     # 5: Gray
+        [240, 18, 190],      # 6: Magenta
+        [255, 133, 27],      # 7: Orange
+        [127, 219, 255],     # 8: Light Blue
+        [135, 12, 37],       # 9: Maroon
+    ], dtype=jnp.float32)
+    
+    # Compute distance to each color for each pixel
+    target_flat = target_output.reshape(B, T, -1, 3)  # (B, T, H*W, 3)
+    # Compute L2 distance: (B, T, H*W, 3) vs (10, 3) -> (B, T, H*W, 10)
+    distances = jnp.sum((target_flat[:, :, :, None, :] - color_palette[None, None, None, :, :]) ** 2, axis=-1)
+    color_indices = jnp.argmin(distances, axis=-1)  # (B, T, H*W)
+    
+    # Create binary mask: which colors appear at least once
+    color_mask = jnp.zeros((B, T, 10), dtype=jnp.float32)
+    for color_idx in range(10):
+        # Check if this color appears anywhere in the image
+        appears = (color_indices == color_idx).any(axis=-1)  # (B, T)
+        color_mask = color_mask.at[:, :, color_idx].set(appears.astype(jnp.float32))
+    
+    # Convert to uniform distribution over present colors
+    # Add small epsilon to avoid division by zero
+    eps = 1e-8
+    color_sum = color_mask.sum(axis=-1, keepdims=True) + eps
+    target_dist = color_mask / color_sum
+    
+    return target_dist
+
+
+def compute_position_targets(target_pair, test_grid_height, test_grid_width):
+    """
+    Extract which positions need to be painted in the target.
+    
+    Args:
+        target_pair: (B, T, H, W*2, 3) RGB image where right half is target output
+        test_grid_height: (B, T) actual grid height (1-30)
+        test_grid_width: (B, T) actual grid width (1-30)
+    
+    Returns:
+        x_target: (B, T, 30) - probability distribution over x coordinates
+        y_target: (B, T, 30) - probability distribution over y coordinates
+    """
+    B, T, H, W2, C = target_pair.shape
+    W = W2 // 2
+    
+    # Extract target output (right half)
+    target_output = target_pair[:, :, :, W:, :]  # (B, T, H, W, 3)
+    
+    # The grid is in the top-left corner of the padded space
+    # Create mask of valid positions based on actual grid dimensions
+    y_coords = jnp.arange(30)[None, None, :, None]  # (1, 1, 30, 1)
+    x_coords = jnp.arange(30)[None, None, None, :]  # (1, 1, 1, 30)
+    
+    # Expand grid dimensions for broadcasting
+    height = test_grid_height[:, :, None, None]  # (B, T, 1, 1)
+    width = test_grid_width[:, :, None, None]     # (B, T, 1, 1)
+    
+    # Create valid region mask
+    valid_mask = ((y_coords < height) & (x_coords < width)).astype(jnp.float32)  # (B, T, 30, 30)
+    
+    # Sample the output image at grid positions
+    # We need to map grid coordinates [0, 29] to pixel coordinates
+    # Since the image is padded, grid position i corresponds to pixel i
+    pixel_y = jnp.arange(30)
+    pixel_x = jnp.arange(30)
+    
+    # Extract colors at grid positions (first 30x30 pixels of target)
+    grid_colors = target_output[:, :, :30, :30, :]  # (B, T, 30, 30, 3)
+    
+    # Check if position is non-black (has content to paint)
+    # A position needs painting if it's not black [0,0,0]
+    is_nonblack = (grid_colors.sum(axis=-1) > 10).astype(jnp.float32)  # (B, T, 30, 30)
+    
+    # Combine: position is relevant if it's both valid and has content
+    painting_target = valid_mask * is_nonblack  # (B, T, 30, 30)
+    
+    # Marginalize to get per-coordinate distributions
+    eps = 1e-8
+    x_sum = painting_target.sum(axis=2) + eps  # (B, T, 30)
+    y_sum = painting_target.sum(axis=3) + eps  # (B, T, 30)
+    
+    # Total positions to normalize
+    total = painting_target.sum(axis=(2, 3), keepdims=True) + eps
+    
+    x_target = x_sum / total.squeeze(axis=2)  # (B, T, 30)
+    y_target = y_sum / total.squeeze(axis=3)  # (B, T, 30)
+    
+    return x_target, y_target
+
+
 class Agent(embodied.jax.Agent):
 
   banner = [
@@ -106,6 +219,12 @@ class Agent(embodied.jax.Agent):
       scales['sel_width'] = 1.0
     if 'sel_height' not in scales:
       scales['sel_height'] = 1.0
+    if 'sel_color' not in scales:
+      scales['sel_color'] = 1.0
+    if 'sel_x' not in scales:
+      scales['sel_x'] = 1.0
+    if 'sel_y' not in scales:
+      scales['sel_y'] = 1.0
     self.scales = scales
 
   @property
@@ -313,6 +432,34 @@ class Agent(embodied.jax.Agent):
     if 'test_grid_height' in obs:
       target_h = jnp.clip((obs['test_grid_height']).astype(i32) - 1, 0, 29)
       losses['sel_height'] = sel_pred['height'].loss(target_h)
+    
+    # Supervised losses for color, x, y selection heads
+    # These supervise the DISTRIBUTION SUPPORT rather than specific actions
+    if 'target_pair' in obs:
+      # Extract target distributions from ground truth
+      color_target = compute_color_target(obs['target_pair'])  # (B, T, 10)
+      x_target, y_target = compute_position_targets(
+          obs['target_pair'], 
+          obs['test_grid_height'], 
+          obs['test_grid_width']
+      )  # (B, T, 30), (B, T, 30)
+      
+      # Get predicted distributions (logits)
+      color_logits = sel_pred['color'].dist.logits if hasattr(sel_pred['color'], 'dist') else sel_pred['color'].logits
+      x_logits = sel_pred['x'].dist.logits if hasattr(sel_pred['x'], 'dist') else sel_pred['x'].logits
+      y_logits = sel_pred['y'].dist.logits if hasattr(sel_pred['y'], 'dist') else sel_pred['y'].logits
+      
+      # Convert to probabilities
+      color_probs = jax.nn.softmax(color_logits)
+      x_probs = jax.nn.softmax(x_logits)
+      y_probs = jax.nn.softmax(y_logits)
+      
+      # KL divergence: D_KL(target || predicted)
+      # This encourages predicted distribution to put mass on relevant items
+      eps = 1e-8
+      losses['sel_color'] = -(color_target * jnp.log(color_probs + eps)).sum(axis=-1)
+      losses['sel_x'] = -(x_target * jnp.log(x_probs + eps)).sum(axis=-1)
+      losses['sel_y'] = -(y_target * jnp.log(y_probs + eps)).sum(axis=-1)
 
     B, T = reset.shape
     shapes = {k: v.shape for k, v in losses.items()}
