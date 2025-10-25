@@ -548,7 +548,7 @@ class Agent(embodied.jax.Agent):
       color_conditional_y = jnp.stack(color_conditional_y, axis=2)  # (B, T, 10, 30)
       
       # Get the selected color from previous actions
-      selected_color = prevact['color']  # (B, T)
+      selected_color = obs['current_color']  # (B, T)
       
       # Index by selected color to get conditional targets (B, T, 30)
       batch_indices = jnp.arange(B)[:, None]
