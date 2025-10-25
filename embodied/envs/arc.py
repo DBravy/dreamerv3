@@ -23,7 +23,7 @@ class ARC(embodied.Env):
         9: [135, 12, 37],       # Maroon
     }
     
-    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=50, size=64, max_puzzles=None, repeat_single=False, puzzle_index=None, invalid_penalty=0.1, size_reward_exponent=2.0, min_target_height=None, max_target_height=None, min_target_width=None, max_target_width=None):
+    def __init__(self, task, puzzle_dir='./arc-data/', version='V2', split='training', length=50, size=64, max_puzzles=None, repeat_single=False, puzzle_index=None, invalid_penalty=0.1, min_target_height=None, max_target_height=None, min_target_width=None, max_target_width=None):
         """
         Args:
             task: Not used, but required by interface
@@ -36,10 +36,6 @@ class ARC(embodied.Env):
             repeat_single: If True, select a single puzzle on first reset and repeat it every episode
             puzzle_index: Optional explicit index into the loaded puzzles to always use (overrides random)
             invalid_penalty: Penalty for invalid actions (default: 0.1)
-            size_reward_exponent: Exponent for grid size reward curve (default: 2.0)
-                - 1.0 = linear (equal reward for each step closer)
-                - 2.0 = quadratic (being close to target matters more)
-                - Higher values = even steeper curve (more emphasis on being very close)
             min_target_height: Optional minimum height for all grids in puzzle (filters puzzles)
             max_target_height: Optional maximum height for all grids in puzzle (filters puzzles)
             min_target_width: Optional minimum width for all grids in puzzle (filters puzzles)
@@ -54,7 +50,6 @@ class ARC(embodied.Env):
         self.repeat_single = repeat_single
         self.puzzle_index = puzzle_index
         self.invalid_penalty = invalid_penalty
-        self.size_reward_exponent = size_reward_exponent
         
         # Convert 0 or negative values to None (meaning no filter)
         self.min_target_height = min_target_height if (min_target_height and min_target_height > 0) else None
@@ -76,7 +71,7 @@ class ARC(embodied.Env):
             filter_info.append(f"width={self.min_target_width or 0}-{self.max_target_width or '∞'}")
         filter_str = f", filters=[{', '.join(filter_info)}]" if filter_info else ""
         
-        print(f"Loaded {len(self.puzzles)} ARC puzzles from {self.full_puzzle_path} ({version}/{split}); max_puzzles={self.max_puzzles}, repeat_single={self.repeat_single}, puzzle_index={self.puzzle_index}, invalid_penalty={self.invalid_penalty}, size_reward_exponent={self.size_reward_exponent}{filter_str}")
+        print(f"Loaded {len(self.puzzles)} ARC puzzles from {self.full_puzzle_path} ({version}/{split}); max_puzzles={self.max_puzzles}, repeat_single={self.repeat_single}, puzzle_index={self.puzzle_index}, invalid_penalty={self.invalid_penalty}{filter_str}")
         
         # Current episode state
         self.current_puzzle = None
@@ -626,44 +621,17 @@ class ARC(embodied.Env):
                         paint_reward += distance_reward
         
         # ===== Component 1: Grid Size Accuracy (0 to 1.0) =====
-        # Dense reward that judges height and width separately
-        # Each dimension contributes up to 0.5 (total 1.0 when both exact)
-        # Exact match: 0.5, Off by 1: 0.25, Off by more: exponential decay from 0.25
-        
-        def calculate_dimension_reward(diff):
-            """Calculate reward for a single dimension (height or width).
-            
-            Args:
-                diff: Absolute difference between current and target dimension
-                
-            Returns:
-                Reward value between 0 and 0.5
-                - diff = 0 (exact): 0.5
-                - diff = 1 (close): 0.25 (flat reward)
-                - diff > 1 (far): exponential decay from 0.25 down to 0
-            """
-            if diff == 0:
-                # Exact match
-                return 0.5
-            elif diff == 1:
-                # Off by 1 - flat reward of 0.25
-                return 0.25
-            else:
-                # Off by more than 1 - apply exponential decay starting from 0.25
-                # Normalize diff to start from 0: (diff - 1) / (30 - 1)
-                # At diff=2, this gives 1/29, at diff=30, this gives 29/29=1
-                normalized = (diff - 1) / 29.0
-                linear = max(0.0, 1.0 - normalized)
-                return 0.25 * (linear ** self.size_reward_exponent)
+        # SPARSE reward: Only give credit when BOTH height AND width are exactly correct
+        # No partial credit for being close
         
         height_diff = abs(current_h - target_h)
         width_diff = abs(current_w - target_w)
         
-        height_accuracy = calculate_dimension_reward(height_diff)
-        width_accuracy = calculate_dimension_reward(width_diff)
-        
-        # Combined grid size accuracy (sum of both dimensions, max 1.0)
-        grid_size_accuracy = height_accuracy + width_accuracy
+        # Only give reward if BOTH dimensions are exact
+        if height_diff == 0 and width_diff == 0:
+            grid_size_accuracy = 1.0
+        else:
+            grid_size_accuracy = 0.0
         
         # ===== Component 2: Content Accuracy (0 to 1.0) =====
         # Calculate accuracy on the overlapping region
