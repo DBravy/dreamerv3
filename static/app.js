@@ -545,7 +545,8 @@ function formatActionCompact(action) {
         const color = COLOR_NAMES[action.current_color];
         details = `@(${action.x},${action.y}) ${color}`;
     } else if (action.action_type === 1) { // Resize
-        details = `to ${action.height}×${action.width}`;
+        // Add 1 to display actual dimensions (agent outputs 0-29, actual is 1-30)
+        details = `to ${action.height + 1}×${action.width + 1}`;
     } else if (action.action_type === 3) { // Set Color - uses color parameter
         const color = COLOR_NAMES[action.color];
         details = `to ${color}`;
@@ -565,7 +566,8 @@ function formatActionDetailed(action) {
         parts.push(`<span>Position: (${action.x}, ${action.y})</span>`);
         parts.push(`<span>Color: <span style="display: inline-block; width: 12px; height: 12px; background: ${colorStyle}; border: 1px solid #666; vertical-align: middle; margin-right: 4px;"></span>${color}</span>`);
     } else if (action.action_type === 1) { // Resize
-        parts.push(`<span>New size: ${action.height}×${action.width}</span>`);
+        // Add 1 to display actual dimensions (agent outputs 0-29, actual is 1-30)
+        parts.push(`<span>New size: ${action.height + 1}×${action.width + 1}</span>`);
     } else if (action.action_type === 2) { // Done
         parts.push(`<span>Episode terminated</span>`);
     } else if (action.action_type === 3) { // Set Color - uses color parameter
