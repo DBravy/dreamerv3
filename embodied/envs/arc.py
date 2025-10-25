@@ -701,17 +701,25 @@ class ARC(embodied.Env):
             # For paint actions, use the direct paint reward
             reward = paint_reward
         else:
-            # For non-paint actions (resize, set_color, done), use delta rewards
+            # For non-paint actions, only reward the relevant component
             grid_size_improvement = grid_size_accuracy - self.previous_grid_size_accuracy
             content_improvement = content_accuracy - self.previous_content_accuracy
             
-            # Color selection bonus (one-time)
             color_selection_bonus = 0.02 if new_useful_color else 0.0
-            
-            # Invalid action penalty
             invalid_penalty = -self.invalid_penalty if not self.last_action_valid else 0.0
             
-            reward = grid_size_improvement + content_improvement + color_selection_bonus + invalid_penalty
+            # Determine which action type was just performed
+            last_action_type = self.action_history[-1]['action_type'] if len(self.action_history) > 0 else None
+            
+            if last_action_type == 1:  # Resize action
+                # Only reward grid size improvement (resize doesn't affect content)
+                reward = grid_size_improvement + invalid_penalty
+            elif last_action_type == 3:  # Set color action
+                # Only reward color selection bonus (doesn't affect grid or content)
+                reward = color_selection_bonus + invalid_penalty
+            else:  # Done action or other
+                # No improvement rewards for done action
+                reward = invalid_penalty
         
         return float(reward), float(grid_size_accuracy), float(content_accuracy)
     
