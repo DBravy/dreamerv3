@@ -97,7 +97,7 @@ class ARC(embodied.Env):
         self.fixed_puzzle = None  # When repeat_single is True, hold onto the chosen puzzle
         
         # NEW: Track current selected color
-        self.current_color = 0  # Default to black (color 0)
+        self.current_color = 1  # Default to blue (color 1) - black is disabled
         
         # NEW: Track which colors have been selected (for reward purposes)
         self.selected_colors = set()  # Colors that have been chosen at least once
@@ -229,7 +229,7 @@ class ARC(embodied.Env):
             'test_grid_width': elements.Space(np.int32, (), 0, 30),
             'num_valid_pairs': elements.Space(np.int32, (), 0, 5),  # How many of pair_1-5 are real (0-5)
             'valid_actions': elements.Space(np.int32, (4,), 0, 1),  # Mask for [paint, resize, done, set_color] matching action_type indices
-            'current_color': elements.Space(np.int32, (), 0, 9),  # Currently selected color (0-9)
+            'current_color': elements.Space(np.int32, (), 1, 9),  # Currently selected color (1-9, black disabled)
             'reward': elements.Space(np.float32),
             'is_first': elements.Space(bool),
             'is_last': elements.Space(bool),
@@ -244,7 +244,7 @@ class ARC(embodied.Env):
             'action_type': elements.Space(np.int32, (), 0, 4),  # 0:paint, 1:resize, 2:done, 3:set_color
             'x': elements.Space(np.int32, (), 0, 30),
             'y': elements.Space(np.int32, (), 0, 30),
-            'color': elements.Space(np.int32, (), 0, 9),  # Used only for set_color action
+            'color': elements.Space(np.int32, (), 1, 9),  # Used only for set_color action (1-9, black disabled)
             'width': elements.Space(np.int32, (), 0, 30),   # Target width for resize (0-29 output, maps to 1-30 actual)
             'height': elements.Space(np.int32, (), 0, 30),  # Target height for resize (0-29 output, maps to 1-30 actual)
             'reset': elements.Space(bool),
@@ -374,10 +374,10 @@ class ARC(embodied.Env):
         self.has_selected_color = False
         self.painted_positions = set()
         
-        # NEW: Reset color to default (black)
-        self.current_color = 0
+        # NEW: Reset color to default (blue)
+        self.current_color = 1
         self.selected_colors = set()  # Reset selected colors tracking
-        self.selected_colors.add(0)  # Black is selected by default
+        self.selected_colors.add(1)  # Blue is selected by default
         
         # Count how many of each color appear in the target grid
         self.target_color_counts = {}
@@ -532,12 +532,12 @@ class ARC(embodied.Env):
                 return
             # Update the current color
             color = int(action['color'])
-            new_color = np.clip(color, 0, 9)  # Ensure color is in valid range
+            new_color = np.clip(color, 1, 9)  # Ensure color is in valid range (1-9, black disabled)
             self.current_color = new_color
             
             # Track this color as selected (for reward calculation)
             self.selected_colors.add(new_color)
-            # Mark that an explicit color has been selected (even if black)
+            # Mark that an explicit color has been selected
             self.has_selected_color = True
         
         # action_type == 2 is "done", no grid modification (always valid)

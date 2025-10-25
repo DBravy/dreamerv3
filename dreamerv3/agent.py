@@ -29,17 +29,16 @@ def compute_color_target(target_pair):
         target_pair: (B, T, H, W*2, 3) RGB image where right half is the target output
     
     Returns:
-        target_dist: (B, T, 10) - probability distribution over colors 0-9
+        target_dist: (B, T, 9) - probability distribution over colors 1-9 (black disabled)
     """
     # Extract right half (target output)
     B, T, H, W2, C = target_pair.shape
     W = W2 // 2
     target_output = target_pair[:, :, :, W:, :]  # (B, T, H, W, 3)
     
-    # Convert RGB to color indices (0-9)
-    # Define ARC color palette as array
+    # Convert RGB to color indices (1-9, excluding black)
+    # Define ARC color palette as array (only non-black colors)
     color_palette = jnp.array([
-        [0, 0, 0],           # 0: Black
         [0, 116, 217],       # 1: Blue
         [255, 65, 54],       # 2: Red
         [46, 204, 64],       # 3: Green
@@ -53,13 +52,13 @@ def compute_color_target(target_pair):
     
     # Compute distance to each color for each pixel
     target_flat = target_output.reshape(B, T, -1, 3)  # (B, T, H*W, 3)
-    # Compute L2 distance: (B, T, H*W, 3) vs (10, 3) -> (B, T, H*W, 10)
+    # Compute L2 distance: (B, T, H*W, 3) vs (9, 3) -> (B, T, H*W, 9)
     distances = jnp.sum((target_flat[:, :, :, None, :] - color_palette[None, None, None, :, :]) ** 2, axis=-1)
-    color_indices = jnp.argmin(distances, axis=-1)  # (B, T, H*W)
+    color_indices = jnp.argmin(distances, axis=-1)  # (B, T, H*W) - indices 0-8 map to colors 1-9
     
-    # Create binary mask: which colors appear at least once
-    color_mask = jnp.zeros((B, T, 10), dtype=jnp.float32)
-    for color_idx in range(10):
+    # Create binary mask: which colors appear at least once (excluding black)
+    color_mask = jnp.zeros((B, T, 9), dtype=jnp.float32)
+    for color_idx in range(9):
         # Check if this color appears anywhere in the image
         appears = (color_indices == color_idx).any(axis=-1)  # (B, T)
         color_mask = color_mask.at[:, :, color_idx].set(appears.astype(jnp.float32))
@@ -142,7 +141,7 @@ def compute_position_targets_for_color(target_pair, test_grid_height, test_grid_
         target_pair: (B, T, H, W*2, 3) RGB image where right half is target output
         test_grid_height: (B, T) actual grid height (1-30)
         test_grid_width: (B, T) actual grid width (1-30)
-        color_idx: int (0-9) - which color to look for
+        color_idx: int (1-9) - which color to look for (black disabled)
     
     Returns:
         x_target: (B, T, 30) - probability distribution over x coordinates where this color appears
@@ -154,9 +153,8 @@ def compute_position_targets_for_color(target_pair, test_grid_height, test_grid_
     # Extract target output (right half)
     target_output = target_pair[:, :, :, W:, :]  # (B, T, H, W, 3)
     
-    # ARC color palette
+    # ARC color palette (only non-black colors)
     color_palette = jnp.array([
-        [0, 0, 0],           # 0: Black
         [0, 116, 217],       # 1: Blue
         [255, 65, 54],       # 2: Red
         [46, 204, 64],       # 3: Green
@@ -172,19 +170,21 @@ def compute_position_targets_for_color(target_pair, test_grid_height, test_grid_
     grid_colors = target_output[:, :, :30, :30, :]  # (B, T, 30, 30, 3)
     
     # Convert RGB to color indices at each position
-    # Compute L2 distance to target color
-    target_color = color_palette[color_idx]  # (3,)
+    # color_idx is 1-9, but our palette array is indexed 0-8 (since we removed black)
+    # So color_idx 1 -> palette[0], color_idx 2 -> palette[1], etc.
+    palette_idx = color_idx - 1  # Convert color_idx (1-9) to palette index (0-8)
+    target_color = color_palette[palette_idx]  # (3,)
     distances = jnp.sum((grid_colors - target_color[None, None, None, None, :]) ** 2, axis=-1)  # (B, T, 30, 30)
     
     # Also compute distance to all colors to get best match
     all_distances = jnp.sum(
         (grid_colors[:, :, :, :, None, :] - color_palette[None, None, None, None, :, :]) ** 2, 
         axis=-1
-    )  # (B, T, 30, 30, 10)
-    best_color = jnp.argmin(all_distances, axis=-1)  # (B, T, 30, 30)
+    )  # (B, T, 30, 30, 9)
+    best_color_palette_idx = jnp.argmin(all_distances, axis=-1)  # (B, T, 30, 30) - indices 0-8
     
-    # Position has this color if best match is this color_idx
-    has_color = (best_color == color_idx).astype(jnp.float32)  # (B, T, 30, 30)
+    # Position has this color if best match is this palette_idx
+    has_color = (best_color_palette_idx == palette_idx).astype(jnp.float32)  # (B, T, 30, 30)
     
     # Create valid region mask based on grid dimensions
     y_coords = jnp.arange(30)[None, None, :, None]  # (1, 1, 30, 1)
@@ -267,7 +267,7 @@ class Agent(embodied.jax.Agent):
         'y': elements.Space(np.int32, (), 0, 30),
         'width': elements.Space(np.int32, (), 0, 30),
         'height': elements.Space(np.int32, (), 0, 30),
-        'color': elements.Space(np.int32, (), 0, 10),
+        'color': elements.Space(np.int32, (), 1, 9),  # 1-9, black disabled
     }
     sel_outs = {k: d1 for k in sel_spaces.keys()}  # categorical for all
     self.sel = embodied.jax.MLPHead(sel_spaces, sel_outs, **config.policy, name='sel')
@@ -513,7 +513,7 @@ class Agent(embodied.jax.Agent):
     # These supervise the DISTRIBUTION SUPPORT rather than specific actions
     if 'target_pair' in obs:
       # Extract target distributions from ground truth
-      color_target = compute_color_target(obs['target_pair'])  # (B, T, 10)
+      color_target = compute_color_target(obs['target_pair'])  # (B, T, 9) - colors 1-9 only
       
       # Get predicted distributions (logits)
       color_logits = sel_pred['color'].dist.logits if hasattr(sel_pred['color'], 'dist') else sel_pred['color'].logits
@@ -530,10 +530,10 @@ class Agent(embodied.jax.Agent):
       losses['sel_color'] = -(color_target * jnp.log(color_probs + eps)).sum(axis=-1)
       
       # NEW: Color-conditional position supervision
-      # Compute position targets for each color (10 colors)
+      # Compute position targets for each color (9 colors: 1-9, excluding black)
       color_conditional_x = []
       color_conditional_y = []
-      for color_idx in range(10):
+      for color_idx in range(1, 10):  # Colors 1-9 (black disabled)
         x_tgt, y_tgt = compute_position_targets_for_color(
             obs['target_pair'], 
             obs['test_grid_height'], 
@@ -543,18 +543,21 @@ class Agent(embodied.jax.Agent):
         color_conditional_x.append(x_tgt)
         color_conditional_y.append(y_tgt)
       
-      # Stack to get (B, T, 10, 30)
-      color_conditional_x = jnp.stack(color_conditional_x, axis=2)  # (B, T, 10, 30)
-      color_conditional_y = jnp.stack(color_conditional_y, axis=2)  # (B, T, 10, 30)
+      # Stack to get (B, T, 9, 30)
+      color_conditional_x = jnp.stack(color_conditional_x, axis=2)  # (B, T, 9, 30)
+      color_conditional_y = jnp.stack(color_conditional_y, axis=2)  # (B, T, 9, 30)
       
-      # Get the selected color from previous actions
-      selected_color = obs['current_color']  # (B, T)
+      # Get the selected color from previous actions (1-9)
+      selected_color = obs['current_color']  # (B, T) - values 1-9
+      
+      # Convert color (1-9) to array index (0-8) for indexing the stacked arrays
+      selected_color_idx = selected_color - 1  # (B, T) - values 0-8
       
       # Index by selected color to get conditional targets (B, T, 30)
       batch_indices = jnp.arange(B)[:, None]
       time_indices = jnp.arange(T)[None, :]
-      x_target_conditional = color_conditional_x[batch_indices, time_indices, selected_color]
-      y_target_conditional = color_conditional_y[batch_indices, time_indices, selected_color]
+      x_target_conditional = color_conditional_x[batch_indices, time_indices, selected_color_idx]
+      y_target_conditional = color_conditional_y[batch_indices, time_indices, selected_color_idx]
       
       # Supervise x,y with color-conditional targets
       # This teaches: "Given you picked color X, paint positions where X appears in target"
