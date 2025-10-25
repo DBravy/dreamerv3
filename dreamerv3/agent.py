@@ -134,6 +134,82 @@ def compute_position_targets(target_pair, test_grid_height, test_grid_width):
     return x_target, y_target
 
 
+def compute_position_targets_for_color(target_pair, test_grid_height, test_grid_width, color_idx):
+    """
+    Extract which positions need to be painted with a SPECIFIC color.
+    
+    Args:
+        target_pair: (B, T, H, W*2, 3) RGB image where right half is target output
+        test_grid_height: (B, T) actual grid height (1-30)
+        test_grid_width: (B, T) actual grid width (1-30)
+        color_idx: int (0-9) - which color to look for
+    
+    Returns:
+        x_target: (B, T, 30) - probability distribution over x coordinates where this color appears
+        y_target: (B, T, 30) - probability distribution over y coordinates where this color appears
+    """
+    B, T, H, W2, C = target_pair.shape
+    W = W2 // 2
+    
+    # Extract target output (right half)
+    target_output = target_pair[:, :, :, W:, :]  # (B, T, H, W, 3)
+    
+    # ARC color palette
+    color_palette = jnp.array([
+        [0, 0, 0],           # 0: Black
+        [0, 116, 217],       # 1: Blue
+        [255, 65, 54],       # 2: Red
+        [46, 204, 64],       # 3: Green
+        [255, 220, 0],       # 4: Yellow
+        [170, 170, 170],     # 5: Gray
+        [240, 18, 190],      # 6: Magenta
+        [255, 133, 27],      # 7: Orange
+        [127, 219, 255],     # 8: Light Blue
+        [135, 12, 37],       # 9: Maroon
+    ], dtype=jnp.float32)
+    
+    # Extract colors at grid positions (first 30x30 pixels of target)
+    grid_colors = target_output[:, :, :30, :30, :]  # (B, T, 30, 30, 3)
+    
+    # Convert RGB to color indices at each position
+    # Compute L2 distance to target color
+    target_color = color_palette[color_idx]  # (3,)
+    distances = jnp.sum((grid_colors - target_color[None, None, None, None, :]) ** 2, axis=-1)  # (B, T, 30, 30)
+    
+    # Also compute distance to all colors to get best match
+    all_distances = jnp.sum(
+        (grid_colors[:, :, :, :, None, :] - color_palette[None, None, None, None, :, :]) ** 2, 
+        axis=-1
+    )  # (B, T, 30, 30, 10)
+    best_color = jnp.argmin(all_distances, axis=-1)  # (B, T, 30, 30)
+    
+    # Position has this color if best match is this color_idx
+    has_color = (best_color == color_idx).astype(jnp.float32)  # (B, T, 30, 30)
+    
+    # Create valid region mask based on grid dimensions
+    y_coords = jnp.arange(30)[None, None, :, None]  # (1, 1, 30, 1)
+    x_coords = jnp.arange(30)[None, None, None, :]  # (1, 1, 1, 30)
+    height = test_grid_height[:, :, None, None]  # (B, T, 1, 1)
+    width = test_grid_width[:, :, None, None]     # (B, T, 1, 1)
+    valid_mask = ((y_coords < height) & (x_coords < width)).astype(jnp.float32)  # (B, T, 30, 30)
+    
+    # Combine: position is relevant if it's valid AND has this color
+    color_positions = valid_mask * has_color  # (B, T, 30, 30)
+    
+    # Marginalize to get per-coordinate distributions
+    eps = 1e-8
+    x_sum = color_positions.sum(axis=2) + eps  # (B, T, 30)
+    y_sum = color_positions.sum(axis=3) + eps  # (B, T, 30)
+    
+    # Total positions with this color
+    total = color_positions.sum(axis=(2, 3), keepdims=True) + eps
+    
+    x_target = x_sum / total.squeeze(axis=2)  # (B, T, 30)
+    y_target = y_sum / total.squeeze(axis=3)  # (B, T, 30)
+    
+    return x_target, y_target
+
+
 class Agent(embodied.jax.Agent):
 
   banner = [
@@ -438,11 +514,6 @@ class Agent(embodied.jax.Agent):
     if 'target_pair' in obs:
       # Extract target distributions from ground truth
       color_target = compute_color_target(obs['target_pair'])  # (B, T, 10)
-      x_target, y_target = compute_position_targets(
-          obs['target_pair'], 
-          obs['test_grid_height'], 
-          obs['test_grid_width']
-      )  # (B, T, 30), (B, T, 30)
       
       # Get predicted distributions (logits)
       color_logits = sel_pred['color'].dist.logits if hasattr(sel_pred['color'], 'dist') else sel_pred['color'].logits
@@ -454,12 +525,41 @@ class Agent(embodied.jax.Agent):
       x_probs = jax.nn.softmax(x_logits)
       y_probs = jax.nn.softmax(y_logits)
       
-      # KL divergence: D_KL(target || predicted)
-      # This encourages predicted distribution to put mass on relevant items
+      # Supervise color distribution (unconditional)
       eps = 1e-8
       losses['sel_color'] = -(color_target * jnp.log(color_probs + eps)).sum(axis=-1)
-      losses['sel_x'] = -(x_target * jnp.log(x_probs + eps)).sum(axis=-1)
-      losses['sel_y'] = -(y_target * jnp.log(y_probs + eps)).sum(axis=-1)
+      
+      # NEW: Color-conditional position supervision
+      # Compute position targets for each color (10 colors)
+      color_conditional_x = []
+      color_conditional_y = []
+      for color_idx in range(10):
+        x_tgt, y_tgt = compute_position_targets_for_color(
+            obs['target_pair'], 
+            obs['test_grid_height'], 
+            obs['test_grid_width'],
+            color_idx
+        )
+        color_conditional_x.append(x_tgt)
+        color_conditional_y.append(y_tgt)
+      
+      # Stack to get (B, T, 10, 30)
+      color_conditional_x = jnp.stack(color_conditional_x, axis=2)  # (B, T, 10, 30)
+      color_conditional_y = jnp.stack(color_conditional_y, axis=2)  # (B, T, 10, 30)
+      
+      # Get the selected color from previous actions
+      selected_color = prevact['color']  # (B, T)
+      
+      # Index by selected color to get conditional targets (B, T, 30)
+      batch_indices = jnp.arange(B)[:, None]
+      time_indices = jnp.arange(T)[None, :]
+      x_target_conditional = color_conditional_x[batch_indices, time_indices, selected_color]
+      y_target_conditional = color_conditional_y[batch_indices, time_indices, selected_color]
+      
+      # Supervise x,y with color-conditional targets
+      # This teaches: "Given you picked color X, paint positions where X appears in target"
+      losses['sel_x'] = -(x_target_conditional * jnp.log(x_probs + eps)).sum(axis=-1)
+      losses['sel_y'] = -(y_target_conditional * jnp.log(y_probs + eps)).sum(axis=-1)
 
     B, T = reset.shape
     shapes = {k: v.shape for k, v in losses.items()}
