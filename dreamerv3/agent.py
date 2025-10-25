@@ -267,7 +267,7 @@ class Agent(embodied.jax.Agent):
         'y': elements.Space(np.int32, (), 0, 30),
         'width': elements.Space(np.int32, (), 0, 30),
         'height': elements.Space(np.int32, (), 0, 30),
-        'color': elements.Space(np.int32, (), 1, 9),  # 1-9, black disabled
+        'color': elements.Space(np.int32, (), 0, 8),  # 9 outputs (0-8) map to colors 1-9, black disabled
     }
     sel_outs = {k: d1 for k in sel_spaces.keys()}  # categorical for all
     self.sel = embodied.jax.MLPHead(sel_spaces, sel_outs, **config.policy, name='sel')
@@ -400,6 +400,11 @@ class Agent(embodied.jax.Agent):
                 policy['y'].logits = y_masked_logits
 
     act = sample(policy)
+    
+    # Map color from selection head output (0-8) to actual color values (1-9)
+    # The selection head outputs indices 0-8, which correspond to colors 1-9 (black disabled)
+    if 'color' in act:
+      act['color'] = act['color'] + 1
 
     # Ensure paint never targets an already painted cell: if the sampled (x, y)
     # is invalid according to valid_positions, reselect the most probable valid
@@ -577,6 +582,7 @@ class Agent(embodied.jax.Agent):
       base = self.pol(inp, 1)
       selp = self.sel(inp, 1)
       merged = {**base, **selp}
+      # Note: Keep color as 0-8 for imagination loop (will be remapped to 1-9 in policy())
       return sample(merged)
     _, imgfeat, imgprevact = self.dyn.imagine(starts, policyfn, H, training)
     first = jax.tree.map(
