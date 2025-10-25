@@ -627,18 +627,43 @@ class ARC(embodied.Env):
         
         # ===== Component 1: Grid Size Accuracy (0 to 1.0) =====
         # Dense reward that judges height and width separately
-        # Uses a non-linear curve to make being close to the target more valuable
+        # Each dimension contributes up to 0.5 (total 1.0 when both exact)
+        # Exact match: 0.5, Off by 1: 0.25, Off by more: exponential decay from 0.25
         
-        # Calculate linear accuracy (1.0 at exact match, 0.0 at max distance)
-        height_linear = max(0.0, 1.0 - abs(current_h - target_h) / 30.0)
-        width_linear = max(0.0, 1.0 - abs(current_w - target_w) / 30.0)
+        def calculate_dimension_reward(diff):
+            """Calculate reward for a single dimension (height or width).
+            
+            Args:
+                diff: Absolute difference between current and target dimension
+                
+            Returns:
+                Reward value between 0 and 0.5
+                - diff = 0 (exact): 0.5
+                - diff = 1 (close): 0.25 (flat reward)
+                - diff > 1 (far): exponential decay from 0.25 down to 0
+            """
+            if diff == 0:
+                # Exact match
+                return 0.5
+            elif diff == 1:
+                # Off by 1 - flat reward of 0.25
+                return 0.25
+            else:
+                # Off by more than 1 - apply exponential decay starting from 0.25
+                # Normalize diff to start from 0: (diff - 1) / (30 - 1)
+                # At diff=2, this gives 1/29, at diff=30, this gives 29/29=1
+                normalized = (diff - 1) / 29.0
+                linear = max(0.0, 1.0 - normalized)
+                return 0.25 * (linear ** self.size_reward_exponent)
         
-        # Apply non-linear curve using the exponent
-        height_accuracy = height_linear ** self.size_reward_exponent
-        width_accuracy = width_linear ** self.size_reward_exponent
+        height_diff = abs(current_h - target_h)
+        width_diff = abs(current_w - target_w)
         
-        # Combined grid size accuracy (average of height and width)
-        grid_size_accuracy = (height_accuracy + width_accuracy) / 2.0
+        height_accuracy = calculate_dimension_reward(height_diff)
+        width_accuracy = calculate_dimension_reward(width_diff)
+        
+        # Combined grid size accuracy (sum of both dimensions, max 1.0)
+        grid_size_accuracy = height_accuracy + width_accuracy
         
         # ===== Component 2: Content Accuracy (0 to 1.0) =====
         # Calculate accuracy on the overlapping region
