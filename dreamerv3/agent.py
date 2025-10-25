@@ -308,9 +308,11 @@ class Agent(embodied.jax.Agent):
     # Use world model features to predict target test grid dimensions.
     sel_pred = self.sel(self.feat2tensor(repfeat), bdims=2)
     if 'test_grid_width' in obs:
-      losses['sel_width'] = sel_pred['width'].loss(obs['test_grid_width'])
+      target_w = jnp.clip((obs['test_grid_width']).astype(i32) - 1, 0, 29)
+      losses['sel_width'] = sel_pred['width'].loss(target_w)
     if 'test_grid_height' in obs:
-      losses['sel_height'] = sel_pred['height'].loss(obs['test_grid_height'])
+      target_h = jnp.clip((obs['test_grid_height']).astype(i32) - 1, 0, 29)
+      losses['sel_height'] = sel_pred['height'].loss(target_h)
 
     B, T = reset.shape
     shapes = {k: v.shape for k, v in losses.items()}
