@@ -101,6 +101,11 @@ class Agent(embodied.jax.Agent):
     scales = self.config.loss_scales.copy()
     rec = scales.pop('rec')
     scales.update({k: rec for k in dec_space})
+    # Add scales for supervised selection heads if not already present
+    if 'sel_width' not in scales:
+      scales['sel_width'] = 1.0
+    if 'sel_height' not in scales:
+      scales['sel_height'] = 1.0
     self.scales = scales
 
   @property
@@ -298,6 +303,14 @@ class Agent(embodied.jax.Agent):
       assert value.dtype == space.dtype, (key, space, value.dtype)
       target = f32(value) / 255 if isimage(space) else value
       losses[key] = recon.loss(sg(target))
+
+    # Supervised selection losses for grid size (width/height)
+    # Use world model features to predict target test grid dimensions.
+    sel_pred = self.sel(self.feat2tensor(repfeat), bdims=2)
+    if 'test_grid_width' in obs:
+      losses['sel_width'] = sel_pred['width'].loss(obs['test_grid_width'])
+    if 'test_grid_height' in obs:
+      losses['sel_height'] = sel_pred['height'].loss(obs['test_grid_height'])
 
     B, T = reset.shape
     shapes = {k: v.shape for k, v in losses.items()}
