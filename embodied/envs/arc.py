@@ -547,14 +547,9 @@ class ARC(embodied.Env):
         Reward based on similarity to ground truth and size matching.
         
         PAINTING REWARD SYSTEM:
-        - When agent paints, reward is based on:
-          - Black (color 0): ALWAYS 0 reward (to discourage using black)
-          - Wrong color: 0 reward
-          - Correct color: 0.5 base reward + distance-based bonus
-          1. Correct color: 0.5 base reward
-          2. Distance to nearest correct placement: 0 to 0.5 additional reward (exponential)
-          - Correct color at correct position: 1.0 reward
-          - Correct color at wrong position: 0.5 to 1.0 based on exponential distance decay
+        - When agent paints, reward is ONLY given when BOTH:
+          1. Correct color at the correct position: reward = 1.0
+          2. Otherwise (wrong color, wrong position, or both): reward = 0.0
         
         For non-paint actions (resize, set_color, done):
         - Grid size accuracy and content accuracy are tracked SEPARATELY
@@ -580,45 +575,58 @@ class ARC(embodied.Env):
                 painted_y = last_action['y']
                 painted_color = last_action['current_color']
                 
-                # Never reward painting with black (color 0)
-                if painted_color == 0:
-                    paint_reward = 0.0
-                # Check if this color exists in the target grid
-                elif not np.any(self.test_output == painted_color):
-                    # Wrong color (not in target) → 0 reward
-                    paint_reward = 0.0
-                # Check if we've already rewarded this color too many times
-                elif self.rewarded_color_counts[painted_color] >= self.target_color_counts[painted_color]:
-                    # Already painted this color as many times as it appears in target → 0 reward
-                    paint_reward = 0.0
+                # NEW LOGIC: Only reward if BOTH color AND position are correct
+                # Check if position is within target grid bounds
+                if painted_y < target_h and painted_x < target_w:
+                    # Check if the color at this position matches the target
+                    if self.test_output[painted_y, painted_x] == painted_color:
+                        paint_reward = 1.0
+                    else:
+                        paint_reward = 0.0
                 else:
-                    # Correct color (exists in target) and still under the limit → base 0.5 reward
-                    paint_reward = 0.5
-                    
-                    # Increment the rewarded count for this color
-                    self.rewarded_color_counts[painted_color] += 1
-                    
-                    # Find the nearest position in target grid with this color
-                    # Get all positions with this color in the target
-                    target_positions = np.argwhere(self.test_output == painted_color)
-                    
-                    if len(target_positions) > 0:
-                        # Calculate Manhattan distance to each target position
-                        distances = np.abs(target_positions - np.array([painted_y, painted_x])).sum(axis=1)
-                        min_distance = distances.min()
-                        
-                        # Exponential distance reward: 0.5 * e^(-lambda * distance)
-                        # lambda controls the steepness (higher = steeper curve)
-                        # We want: far away = small reward, close = large reward
-                        # At distance 0: e^0 = 1, so reward = 0.5 * 1 = 0.5 additional
-                        # At large distance: e^(-large) ≈ 0, so reward ≈ 0 additional
-                        
-                        # Use lambda = 0.3 for moderate exponential decay
-                        # This makes each step closer significantly more valuable when close
-                        distance_lambda = 0.3
-                        distance_reward = 0.5 * np.exp(-distance_lambda * min_distance)
-                        
-                        paint_reward += distance_reward
+                    # Position is out of bounds of target grid
+                    paint_reward = 0.0
+                
+                # COMMENTED OUT: Previous reward logic with distance-based rewards
+                # # Never reward painting with black (color 0)
+                # if painted_color == 0:
+                #     paint_reward = 0.0
+                # # Check if this color exists in the target grid
+                # elif not np.any(self.test_output == painted_color):
+                #     # Wrong color (not in target) → 0 reward
+                #     paint_reward = 0.0
+                # # Check if we've already rewarded this color too many times
+                # elif self.rewarded_color_counts[painted_color] >= self.target_color_counts[painted_color]:
+                #     # Already painted this color as many times as it appears in target → 0 reward
+                #     paint_reward = 0.0
+                # else:
+                #     # Correct color (exists in target) and still under the limit → base 0.5 reward
+                #     paint_reward = 0.5
+                #     
+                #     # Increment the rewarded count for this color
+                #     self.rewarded_color_counts[painted_color] += 1
+                #     
+                #     # Find the nearest position in target grid with this color
+                #     # Get all positions with this color in the target
+                #     target_positions = np.argwhere(self.test_output == painted_color)
+                #     
+                #     if len(target_positions) > 0:
+                #         # Calculate Manhattan distance to each target position
+                #         distances = np.abs(target_positions - np.array([painted_y, painted_x])).sum(axis=1)
+                #         min_distance = distances.min()
+                #         
+                #         # Exponential distance reward: 0.5 * e^(-lambda * distance)
+                #         # lambda controls the steepness (higher = steeper curve)
+                #         # We want: far away = small reward, close = large reward
+                #         # At distance 0: e^0 = 1, so reward = 0.5 * 1 = 0.5 additional
+                #         # At large distance: e^(-large) ≈ 0, so reward ≈ 0 additional
+                #         
+                #         # Use lambda = 0.3 for moderate exponential decay
+                #         # This makes each step closer significantly more valuable when close
+                #         distance_lambda = 0.3
+                #         distance_reward = 0.5 * np.exp(-distance_lambda * min_distance)
+                #         
+                #         paint_reward += distance_reward
         
         # ===== Component 1: Grid Size Accuracy (0 to 1.0) =====
         # SPARSE reward: Only give credit when BOTH height AND width are exactly correct
