@@ -353,6 +353,7 @@ async function startTraining() {
     const puzzlesCountVal = document.getElementById('puzzles-count').value;
     const repeatSingle = document.getElementById('repeat-single').checked;
     const puzzleIndexVal = document.getElementById('puzzle-index').value;
+    const maxStepsVal = document.getElementById('max-steps').value;
     const minTargetWidth = document.getElementById('min-target-width').value;
     const maxTargetWidth = document.getElementById('max-target-width').value;
     const minTargetHeight = document.getElementById('min-target-height').value;
@@ -368,6 +369,9 @@ async function startTraining() {
     }
     if (puzzleIndexVal !== '') {
         extraFlags.push(`--env.arc.puzzle_index ${puzzleIndexVal}`);
+    }
+    if (maxStepsVal !== '') {
+        extraFlags.push(`--env.arc.length ${maxStepsVal}`);
     }
     if (minTargetWidth !== '') {
         extraFlags.push(`--env.arc.min_target_width ${minTargetWidth}`);
@@ -541,7 +545,7 @@ function formatActionCompact(action) {
         const color = COLOR_NAMES[action.current_color];
         details = `@(${action.x},${action.y}) ${color}`;
     } else if (action.action_type === 1) { // Resize
-        details = `to ${action.width}×${action.height}`;
+        details = `to ${action.height}×${action.width}`;
     } else if (action.action_type === 3) { // Set Color - uses color parameter
         const color = COLOR_NAMES[action.color];
         details = `to ${color}`;
@@ -561,7 +565,7 @@ function formatActionDetailed(action) {
         parts.push(`<span>Position: (${action.x}, ${action.y})</span>`);
         parts.push(`<span>Color: <span style="display: inline-block; width: 12px; height: 12px; background: ${colorStyle}; border: 1px solid #666; vertical-align: middle; margin-right: 4px;"></span>${color}</span>`);
     } else if (action.action_type === 1) { // Resize
-        parts.push(`<span>New size: ${action.width}×${action.height}</span>`);
+        parts.push(`<span>New size: ${action.height}×${action.width}</span>`);
     } else if (action.action_type === 2) { // Done
         parts.push(`<span>Episode terminated</span>`);
     } else if (action.action_type === 3) { // Set Color - uses color parameter
