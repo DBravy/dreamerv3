@@ -755,21 +755,6 @@ class ARC(embodied.Env):
         obs['test_grid_height'] = np.int32(min(t_h, 30))
         obs['test_grid_width'] = np.int32(min(t_w, 30))
 
-        # Action availability mask: [paint, resize, done, set_color] matching action_type indices [0, 1, 2, 3]
-        # Enforce: step 0 must be resize; step 1 must be set_color; painting requires resize and explicit color selection
-        obs['valid_actions'] = np.array([
-            1 if (self.has_resized and self.has_selected_color and self.step_count >= 2) else 0,  # [0] paint only after resize AND color selection
-            1 if (self.step_count == 0 and not self.has_resized) else 0,  # [1] resize ONLY on step 0
-            1 if self.step_count >= 10 else 0,  # [2] done only allowed after 10 steps
-            1 if self.step_count >= 1 else 0,  # [3] set_color only allowed AFTER step 0 (after resize)
-        ], dtype=np.int32)
-        
-        # Add current color to observation
-        obs['current_color'] = np.int32(self.current_color)
-        
-        # Color mask: disable black (color 0), enable all others (1-9)
-        obs['valid_colors'] = np.array([0, 1, 1, 1, 1, 1, 1, 1, 1, 1], dtype=np.int32)
-
         # Spatial mask for valid paint positions
         # Start with all positions marked as invalid (0)
         valid_positions = np.zeros((30, 30), dtype=np.int32)
@@ -787,6 +772,23 @@ class ARC(embodied.Env):
                     valid_positions[y, x] = 1
         
         obs['valid_positions'] = valid_positions
+        
+        # Action availability mask: [paint, resize, done, set_color] matching action_type indices [0, 1, 2, 3]
+        # Enforce: step 0 must be resize; step 1 must be set_color; painting requires resize, explicit color selection,
+        # and at least one valid unpainted position. If no valid positions remain, only 'done' is allowed.
+        has_any_valid_positions = np.int32(obs['valid_positions'].sum() > 0)
+        obs['valid_actions'] = np.array([
+            1 if (self.has_resized and self.has_selected_color and self.step_count >= 2 and has_any_valid_positions == 1) else 0,  # [0] paint
+            1 if (self.step_count == 0 and not self.has_resized) else 0,  # [1] resize ONLY on step 0
+            1 if (self.step_count >= 10 or has_any_valid_positions == 0) else 0,  # [2] done allowed if no paints left
+            1 if (self.step_count >= 1 and has_any_valid_positions == 1) else 0,  # [3] set_color only when painting is possible
+        ], dtype=np.int32)
+        
+        # Add current color to observation
+        obs['current_color'] = np.int32(self.current_color)
+        
+        # Color mask: disable black (color 0), enable all others (1-9)
+        obs['valid_colors'] = np.array([0, 1, 1, 1, 1, 1, 1, 1, 1, 1], dtype=np.int32)
         
         return obs
     
