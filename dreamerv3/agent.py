@@ -210,6 +210,75 @@ def compute_position_targets_for_color(target_pair, test_grid_height, test_grid_
     return x_target, y_target
 
 
+def compute_position_heatmap_for_color(target_pair, test_grid_height, test_grid_width, color_idx):
+    """
+    Extract joint position heatmap showing where a SPECIFIC color should be painted.
+    This is the JOINT distribution p(x,y) rather than separate marginals p(x) and p(y).
+    
+    Args:
+        target_pair: (B, T, H, W*2, 3) RGB image where right half is target output
+        test_grid_height: (B, T) actual grid height (1-30)
+        test_grid_width: (B, T) actual grid width (1-30)
+        color_idx: int (0-9) - which color to look for
+    
+    Returns:
+        position_heatmap: (B, T, 900) - probability distribution over 900 positions (30×30 flattened)
+    """
+    B, T, H, W2, C = target_pair.shape
+    W = W2 // 2
+    
+    # Extract target output (right half)
+    target_output = target_pair[:, :, :, W:, :]  # (B, T, H, W, 3)
+    
+    # ARC color palette
+    color_palette = jnp.array([
+        [0, 0, 0],           # 0: Black
+        [0, 116, 217],       # 1: Blue
+        [255, 65, 54],       # 2: Red
+        [46, 204, 64],       # 3: Green
+        [255, 220, 0],       # 4: Yellow
+        [170, 170, 170],     # 5: Gray
+        [240, 18, 190],      # 6: Magenta
+        [255, 133, 27],      # 7: Orange
+        [127, 219, 255],     # 8: Light Blue
+        [135, 12, 37],       # 9: Maroon
+    ], dtype=jnp.float32)
+    
+    # Extract colors at grid positions (first 30x30 pixels of target)
+    grid_colors = target_output[:, :, :30, :30, :]  # (B, T, 30, 30, 3)
+    
+    # Convert RGB to color indices at each position
+    all_distances = jnp.sum(
+        (grid_colors[:, :, :, :, None, :] - color_palette[None, None, None, None, :, :]) ** 2, 
+        axis=-1
+    )  # (B, T, 30, 30, 10)
+    best_color = jnp.argmin(all_distances, axis=-1)  # (B, T, 30, 30)
+    
+    # Position has this color if best match is this color_idx
+    has_color = (best_color == color_idx).astype(jnp.float32)  # (B, T, 30, 30)
+    
+    # Create valid region mask based on grid dimensions
+    y_coords = jnp.arange(30)[None, None, :, None]  # (1, 1, 30, 1)
+    x_coords = jnp.arange(30)[None, None, None, :]  # (1, 1, 1, 30)
+    height = test_grid_height[:, :, None, None]  # (B, T, 1, 1)
+    width = test_grid_width[:, :, None, None]     # (B, T, 1, 1)
+    valid_mask = ((y_coords < height) & (x_coords < width)).astype(jnp.float32)  # (B, T, 30, 30)
+    
+    # Combine: position is relevant if it's valid AND has this color
+    color_positions = valid_mask * has_color  # (B, T, 30, 30)
+    
+    # Normalize to probability distribution
+    eps = 1e-8
+    total = color_positions.sum(axis=(2, 3), keepdims=True) + eps
+    position_heatmap = color_positions / total  # (B, T, 30, 30)
+    
+    # Flatten to (B, T, 900)
+    position_heatmap = position_heatmap.reshape((B, T, 900))
+    
+    return position_heatmap
+
+
+
 class Agent(embodied.jax.Agent):
 
   banner = [
@@ -262,9 +331,9 @@ class Agent(embodied.jax.Agent):
 
     # Selection heads: discrete distributions conditioned on feat2tensor
     # to select spatial positions, sizes, and colors.
+    # Position is now a joint 30×30 = 900 class distribution (heatmap)
     sel_spaces = {
-        'x': elements.Space(np.int32, (), 0, 30),
-        'y': elements.Space(np.int32, (), 0, 30),
+        'position': elements.Space(np.int32, (), 0, 900),  # 30×30 flattened
         'width': elements.Space(np.int32, (), 0, 30),
         'height': elements.Space(np.int32, (), 0, 30),
         'color': elements.Space(np.int32, (), 0, 10),
@@ -297,10 +366,8 @@ class Agent(embodied.jax.Agent):
       scales['sel_height'] = 1.0
     if 'sel_color' not in scales:
       scales['sel_color'] = 1.0
-    if 'sel_x' not in scales:
-      scales['sel_x'] = 1.0
-    if 'sel_y' not in scales:
-      scales['sel_y'] = 1.0
+    if 'sel_position' not in scales:
+      scales['sel_position'] = 1.0
     self.scales = scales
 
   @property
@@ -380,84 +447,31 @@ class Agent(embodied.jax.Agent):
       else:
         policy['color'].logits = masked_color_logits
 
-    # NEW: Apply spatial mask to x and y coordinates
-    if 'valid_positions' in obs:
+    # NEW: Apply spatial mask to position heatmap
+    if 'valid_positions' in obs and 'position' in policy:
         spatial_mask = f32(obs['valid_positions'])  # (B, 30, 30)
+        # Flatten to (B, 900) to match position distribution
+        position_mask = spatial_mask.reshape((-1, 900))  # (B, 900)
+        
+        position_dist = policy['position']
+        position_logits = position_dist.dist.logits if hasattr(position_dist, 'dist') else position_dist.logits
+        position_neg_inf = jnp.full_like(position_logits, -1e9)
+        masked_position_logits = jnp.where(position_mask == 1.0, position_logits, position_neg_inf)
+        if hasattr(position_dist, 'dist'):
+            policy['position'].dist.logits = masked_position_logits
+        else:
+            policy['position'].logits = masked_position_logits
 
-        # For an x (column) to be valid, at least one y (row) in that column must be valid.
-        # Reduce over axis=1 (y) to get a per-x mask of shape (B, 30).
-        x_mask = (spatial_mask.sum(axis=1) > 0).astype(f32)  # (B, 30)
-
-        # For a y (row) to be valid, at least one x (col) in that row must be valid.
-        # Reduce over axis=2 (x) to get a per-y mask of shape (B, 30).
-        y_mask = (spatial_mask.sum(axis=2) > 0).astype(f32)  # (B, 30)
-
-        # Apply to x logits
-        if 'x' in policy:
-            x_dist = policy['x']
-            x_logits = x_dist.dist.logits if hasattr(x_dist, 'dist') else x_dist.logits
-            x_neg_inf = jnp.full_like(x_logits, -1e9)
-            # Broadcast (B,30) over logits shape; works for both Dist and plain logits.
-            x_masked_logits = jnp.where(x_mask == 1.0, x_logits, x_neg_inf)
-            if hasattr(x_dist, 'dist'):
-                policy['x'].dist.logits = x_masked_logits
-            else:
-                policy['x'].logits = x_masked_logits
-
-        # Apply to y logits
-        if 'y' in policy:
-            y_dist = policy['y']
-            y_logits = y_dist.dist.logits if hasattr(y_dist, 'dist') else y_dist.logits
-            y_neg_inf = jnp.full_like(y_logits, -1e9)
-            y_masked_logits = jnp.where(y_mask == 1.0, y_logits, y_neg_inf)
-            if hasattr(y_dist, 'dist'):
-                policy['y'].dist.logits = y_masked_logits
-            else:
-                policy['y'].logits = y_masked_logits
 
     act = sample(policy)
-
-    # Ensure paint never targets an already painted cell: if the sampled (x, y)
-    # is invalid according to valid_positions, reselect the most probable valid
-    # coordinate using the product of x and y marginals.
-    if 'valid_positions' in obs and 'x' in policy and 'y' in policy and 'action_type' in act:
-      vp = f32(obs['valid_positions'])  # (B, 30, 30), 1 for valid, 0 for invalid
-      B = vp.shape[0]
-      # Current sampled selections
-      sel_x = i32(act['x'])
-      sel_y = i32(act['y'])
-      atype = i32(act['action_type'])
-      # Clip in range [0, 29] to be safe
-      sel_x = jnp.clip(sel_x, 0, 29)
-      sel_y = jnp.clip(sel_y, 0, 29)
-      batch_idx = jnp.arange(B)
-      chosen_valid = vp[batch_idx, sel_y, sel_x] > 0
-      # Only adjust when painting and chosen cell is invalid
-      need_adjust = (atype == 0) & (~chosen_valid)
-
-      # Build joint probability p(x, y) = p(x) * p(y)
-      def get_logits(dist):
-        return dist.dist.logits if hasattr(dist, 'dist') else dist.logits
-      x_logits = get_logits(policy['x'])  # (B, 30)
-      y_logits = get_logits(policy['y'])  # (B, 30)
-      x_prob = jax.nn.softmax(x_logits)
-      y_prob = jax.nn.softmax(y_logits)
-      joint = x_prob[:, None, :] * y_prob[:, :, None]  # (B, 30, 30)
-      # Mask invalid cells
-      masked_joint = joint * vp
-      # Argmax over flattened grid
-      flat = masked_joint.reshape((B, -1))
-      best_flat_idx = jnp.argmax(flat, axis=1)
-      best_y, best_x = jnp.divmod(best_flat_idx, 30)
-      best_x = i32(best_x)
-      best_y = i32(best_y)
-      # If there are no valid cells (rare), keep the original sample
-      any_valid = (vp.sum(axis=(1, 2)) > 0)
-      repl_x = jnp.where(any_valid, best_x, sel_x)
-      repl_y = jnp.where(any_valid, best_y, sel_y)
-      # Apply replacements only where adjustment is needed
-      act['x'] = jnp.where(need_adjust, repl_x, act['x'])
-      act['y'] = jnp.where(need_adjust, repl_y, act['y'])
+    
+    # Convert position index back to x,y coordinates for the environment
+    if 'position' in act:
+      position_idx = i32(act['position'])  # (B,) values in [0, 899]
+      # Convert flat index to (y, x) coordinates: position = y * 30 + x
+      act['y'] = position_idx // 30  # row
+      act['x'] = position_idx % 30   # column
+    
     out = {}
     out['finite'] = elements.tree.flatdict(jax.tree.map(
         lambda x: jnp.isfinite(x).all(range(1, x.ndim)),
@@ -525,7 +539,7 @@ class Agent(embodied.jax.Agent):
       target_h = jnp.clip((obs['test_grid_height']).astype(i32) - 1, 0, 29)
       losses['sel_height'] = sel_pred['height'].loss(target_h)
     
-    # Supervised losses for color, x, y selection heads
+    # Supervised losses for color and position selection heads
     # These supervise the DISTRIBUTION SUPPORT rather than specific actions
     if 'target_pair' in obs:
       # Extract target distributions from ground truth
@@ -533,49 +547,43 @@ class Agent(embodied.jax.Agent):
       
       # Get predicted distributions (logits)
       color_logits = sel_pred['color'].dist.logits if hasattr(sel_pred['color'], 'dist') else sel_pred['color'].logits
-      x_logits = sel_pred['x'].dist.logits if hasattr(sel_pred['x'], 'dist') else sel_pred['x'].logits
-      y_logits = sel_pred['y'].dist.logits if hasattr(sel_pred['y'], 'dist') else sel_pred['y'].logits
+      position_logits = sel_pred['position'].dist.logits if hasattr(sel_pred['position'], 'dist') else sel_pred['position'].logits
       
       # Convert to probabilities
       color_probs = jax.nn.softmax(color_logits)
-      x_probs = jax.nn.softmax(x_logits)
-      y_probs = jax.nn.softmax(y_logits)
+      position_probs = jax.nn.softmax(position_logits)
       
       # Supervise color distribution (unconditional)
       eps = 1e-8
       losses['sel_color'] = -(color_target * jnp.log(color_probs + eps)).sum(axis=-1)
       
-      # NEW: Color-conditional position supervision
-      # Compute position targets for each color (10 colors)
-      color_conditional_x = []
-      color_conditional_y = []
+      # NEW: Color-conditional position supervision using joint heatmap
+      # Compute position heatmap targets for each color (10 colors)
+      color_conditional_positions = []
       for color_idx in range(10):
-        x_tgt, y_tgt = compute_position_targets_for_color(
+        pos_heatmap = compute_position_heatmap_for_color(
             obs['target_pair'], 
             obs['test_grid_height'], 
             obs['test_grid_width'],
             color_idx
-        )
-        color_conditional_x.append(x_tgt)
-        color_conditional_y.append(y_tgt)
+        )  # (B, T, 900)
+        color_conditional_positions.append(pos_heatmap)
       
-      # Stack to get (B, T, 10, 30)
-      color_conditional_x = jnp.stack(color_conditional_x, axis=2)  # (B, T, 10, 30)
-      color_conditional_y = jnp.stack(color_conditional_y, axis=2)  # (B, T, 10, 30)
+      # Stack to get (B, T, 10, 900)
+      color_conditional_positions = jnp.stack(color_conditional_positions, axis=2)  # (B, T, 10, 900)
       
       # Get the selected color from previous actions
       selected_color = obs['current_color']  # (B, T)
       
-      # Index by selected color to get conditional targets (B, T, 30)
+      # Index by selected color to get conditional targets (B, T, 900)
       batch_indices = jnp.arange(B)[:, None]
       time_indices = jnp.arange(T)[None, :]
-      x_target_conditional = color_conditional_x[batch_indices, time_indices, selected_color]
-      y_target_conditional = color_conditional_y[batch_indices, time_indices, selected_color]
+      position_target_conditional = color_conditional_positions[batch_indices, time_indices, selected_color]
       
-      # Supervise x,y with color-conditional targets
-      # This teaches: "Given you picked color X, paint positions where X appears in target"
-      losses['sel_x'] = -(x_target_conditional * jnp.log(x_probs + eps)).sum(axis=-1)
-      losses['sel_y'] = -(y_target_conditional * jnp.log(y_probs + eps)).sum(axis=-1)
+      # Supervise position with color-conditional heatmap targets
+      # This teaches: "Given you picked color X, paint at positions where X appears in target"
+      losses['sel_position'] = -(position_target_conditional * jnp.log(position_probs + eps)).sum(axis=-1)
+
 
     B, T = reset.shape
     shapes = {k: v.shape for k, v in losses.items()}
@@ -827,7 +835,7 @@ def imag_loss(
   for k, dist in policy.items():
     lp = dist.logp(sg(act[k]))[:, :-1]
     ent = dist.entropy()[:, :-1]
-    if k in ('x', 'y'):
+    if k == 'position':
       m = paint_mask
     elif k in ('width', 'height'):
       m = resize_mask
@@ -868,7 +876,7 @@ def imag_loss(
   metrics['ret_rate'] = (jnp.abs(ret_normed) >= 1.0).mean()
   for k, dist in policy.items():
     ent = dist.entropy()[:, :-1]
-    if k in ('x', 'y'):
+    if k == 'position':
       m = paint_mask
     elif k in ('width', 'height'):
       m = resize_mask
