@@ -20,15 +20,21 @@ class ARC(embodied.Env):
        - Transitions to COLOR_SELECT after successful resize
     
     2. COLOR_SELECT Phase:
-       - Only 'set_color' action is valid (or 'done' if no positions remain)
-       - Agent selects which color to work on next
-       - Transitions to PAINT after selecting a color
+       - 'set_color' action: Pick a color to work on → transitions to PAINT
+       - 'done' action: Submit answer and end episode (voluntary stopping)
     
     3. PAINT Phase:
-       - Only 'paint' and 'done' actions are valid
-       - Agent must paint with the currently selected color
-       - 'done' action transitions back to COLOR_SELECT (allows picking new color)
-       - Episode ends only when time limit reached or done pressed with no work remaining
+       - 'paint' action: Paint with the currently selected color
+       - 'done' action: Finish with this color → transitions back to COLOR_SELECT
+       - Agent can paint multiple times before pressing done
+    
+    DONE ACTION BEHAVIOR:
+    - Done in PAINT phase → Return to COLOR_SELECT (work on another color)
+    - Done in COLOR_SELECT phase → Submit answer and end episode
+    
+    This two-level done system allows agents to:
+    1. Finish working on one color (done in PAINT)
+    2. Submit their final answer when satisfied (done in COLOR_SELECT)
     
     This structure ensures agents work on one color at a time (subtask-oriented),
     preventing the pathological behavior of constantly switching between colors
@@ -338,18 +344,16 @@ class ARC(embodied.Env):
         # Check if done
         # Episode ends when:
         # 1. Time limit reached, OR
-        # 2. Done action pressed from PAINT phase when no valid positions remain
-        h, w = self.current_output.shape
-        has_valid_positions = any((x, y) not in self.painted_positions 
-                                   for y in range(h) for x in range(w))
+        # 2. Done action pressed from COLOR_SELECT phase (submit answer)
         
         is_done = (
             self.step_count >= self.length or  # Time limit
-            (action['action_type'] == 2 and self.phase == 'COLOR_SELECT' and not has_valid_positions)  # Done with no work left
+            (action['action_type'] == 2 and self.phase == 'COLOR_SELECT')  # Done in COLOR_SELECT = submit
         )
         
-        # Note: Done action in PAINT phase transitions to COLOR_SELECT (handled in _execute_action)
-        # This allows agent to pick a new color and continue painting
+        # Note: Done in PAINT phase transitions to COLOR_SELECT (handled in _execute_action)
+        # This allows agent to finish one color and pick another
+        # Done in COLOR_SELECT submits the final answer and ends the episode
         
         # Save episode data when episode ends
         if is_done:
@@ -857,12 +861,14 @@ class ARC(embodied.Env):
             obs['valid_actions'] = np.array([0, 1, 0, 0], dtype=np.int32)
         
         elif self.phase == 'COLOR_SELECT':
-            # In COLOR_SELECT: set_color is valid, and done is valid if no more positions
+            # In COLOR_SELECT: set_color and done are both always valid
+            # done = submit answer and end episode
+            # set_color = continue working on another color
             obs['valid_actions'] = np.array([
                 0,  # [0] paint (not in this phase)
                 0,  # [1] resize (not in this phase)
-                1 if has_any_valid_positions == 0 else 0,  # [2] done (only if no work left)
-                1,  # [3] set_color (always valid in this phase)
+                1,  # [2] done (always valid - submits answer)
+                1,  # [3] set_color (always valid - pick another color)
             ], dtype=np.int32)
         
         elif self.phase == 'PAINT':
