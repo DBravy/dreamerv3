@@ -165,10 +165,6 @@ class ARC(embodied.Env):
         # Track color counts for reward limiting
         self.target_color_counts = {}  # How many of each color in target
         self.rewarded_color_counts = {}  # How many times we've rewarded each color
-        
-        # NEW: Track paint requirements for current color
-        self.paints_required = 0  # How many times agent must paint with current color
-        self.paints_remaining = 0  # How many more paints needed with current color
     
     def _load_puzzles(self):
         """Load ARC JSON files from the specified version and split directory."""
@@ -282,8 +278,6 @@ class ARC(embodied.Env):
             'is_last': elements.Space(bool),
             'is_terminal': elements.Space(bool),
             'valid_positions': elements.Space(np.int32, (30, 30), 0, 1),  # Spatial mask [y, x] for paintable positions (1=valid, 0=invalid/painted/out-of-bounds)
-            'paints_required': elements.Space(np.int32, (), 0, 900),  # How many times agent must paint with current color
-            'paints_remaining': elements.Space(np.int32, (), 0, 900),  # How many more paints needed with current color
         }
     
     @property
@@ -448,10 +442,6 @@ class ARC(embodied.Env):
             self.target_color_counts[color] = count
             self.rewarded_color_counts[color] = 0
         
-        # Initialize paint requirements (set when color is selected)
-        self.paints_required = 0  # Will be set when color is selected
-        self.paints_remaining = 0  # Will be set when color is selected
-        
         # Reset validity tracking
         self.last_action_valid = True
         self.invalid_action_count = 0
@@ -545,10 +535,6 @@ class ARC(embodied.Env):
                 self.selected_colors.add(new_color)
                 self.has_selected_color = True
                 
-                # Set paint requirements based on target color count
-                self.paints_required = self.target_color_counts[new_color]
-                self.paints_remaining = self.paints_required
-                
                 # TRANSITION: COLOR_SELECT → PAINT
                 self.phase = 'PAINT'
                 self.paints_in_current_phase = 0  # Reset paint counter
@@ -604,9 +590,6 @@ class ARC(embodied.Env):
                 self.painted_positions.add((x, y))
                 self.paints_in_current_phase += 1
                 
-                # Decrement paints remaining for current color
-                self.paints_remaining = max(0, self.paints_remaining - 1)
-                
                 # Check if we should auto-transition back to COLOR_SELECT
                 # Option 1: Check if no more valid positions to paint (any color)
                 h, w = self.current_output.shape
@@ -625,21 +608,18 @@ class ARC(embodied.Env):
                     pass
             
             elif action_type == 2:  # Done action - explicit exit from painting
-                # Must paint exactly the required number of times (paints_remaining must be 0)
-                if self.paints_remaining > 0:
+                # Must paint at least once before transitioning back to COLOR_SELECT
+                if self.paints_in_current_phase == 0:
                     self.last_action_valid = False
                     self.invalid_action_count += 1
-                    if 'done_before_all_paints' not in self.invalid_action_types:
-                        self.invalid_action_types['done_before_all_paints'] = 0
-                    self.invalid_action_types['done_before_all_paints'] += 1
+                    if 'done_before_painting' not in self.invalid_action_types:
+                        self.invalid_action_types['done_before_painting'] = 0
+                    self.invalid_action_types['done_before_painting'] += 1
                     return
                 
                 # TRANSITION: PAINT → COLOR_SELECT (or end episode if done with all)
-                # Agent has completed painting all instances of current color
+                # For now, allow re-entering color select to change colors
                 self.phase = 'COLOR_SELECT'
-                # Reset paint counters for next color
-                self.paints_required = 0
-                self.paints_remaining = 0
             
             else:
                 # Wrong action type in PAINT phase
@@ -904,11 +884,11 @@ class ARC(embodied.Env):
         
         elif self.phase == 'PAINT':
             # In PAINT: paint (if positions available) and done are valid
-            # Done is only valid after painting required number of times (paints_remaining == 0)
+            # Done transitions back to COLOR_SELECT only after painting at least once
             obs['valid_actions'] = np.array([
                 1 if has_any_valid_positions == 1 else 0,  # [0] paint
                 0,  # [1] resize (not allowed in PAINT phase)
-                1 if self.paints_remaining == 0 else 0,  # [2] done (only after painting required count)
+                1 if self.paints_in_current_phase > 0 else 0,  # [2] done (only after painting at least once)
                 0,  # [3] set_color (not allowed in PAINT phase)
             ], dtype=np.int32)
         
@@ -926,10 +906,6 @@ class ARC(embodied.Env):
         
         # Color mask: disable black (color 0), enable all others (1-9)
         obs['valid_colors'] = np.array([0, 1, 1, 1, 1, 1, 1, 1, 1, 1], dtype=np.int32)
-        
-        # Add paint count requirements
-        obs['paints_required'] = np.int32(self.paints_required)
-        obs['paints_remaining'] = np.int32(self.paints_remaining)
         
         return obs
     
