@@ -278,6 +278,72 @@ def compute_position_heatmap_for_color(target_pair, test_grid_height, test_grid_
     return position_heatmap
 
 
+def compute_color_count_target(target_pair, test_grid_height, test_grid_width, color_idx):
+    """
+    Count how many pixels of a specific color appear in the target.
+    
+    Args:
+        target_pair: (B, T, H, W*2, 3) RGB image where right half is target output
+        test_grid_height: (B, T) actual grid height (1-30)
+        test_grid_width: (B, T) actual grid width (1-30)
+        color_idx: int or (B, T) array of color indices (0-9)
+    
+    Returns:
+        count: (B, T) - number of pixels with this color (as float32)
+    """
+    B, T, H, W2, C = target_pair.shape
+    W = W2 // 2
+    
+    # Extract target output (right half)
+    target_output = target_pair[:, :, :, W:, :]  # (B, T, H, W, 3)
+    
+    # ARC color palette
+    color_palette = jnp.array([
+        [0, 0, 0],           # 0: Black
+        [0, 116, 217],       # 1: Blue
+        [255, 65, 54],       # 2: Red
+        [46, 204, 64],       # 3: Green
+        [255, 220, 0],       # 4: Yellow
+        [170, 170, 170],     # 5: Gray
+        [240, 18, 190],      # 6: Magenta
+        [255, 133, 27],      # 7: Orange
+        [127, 219, 255],     # 8: Light Blue
+        [135, 12, 37],       # 9: Maroon
+    ], dtype=jnp.float32)
+    
+    # Extract colors at grid positions (first 30x30 pixels of target)
+    grid_colors = target_output[:, :, :30, :30, :]  # (B, T, 30, 30, 3)
+    
+    # Convert RGB to color indices at each position
+    all_distances = jnp.sum(
+        (grid_colors[:, :, :, :, None, :] - color_palette[None, None, None, None, :, :]) ** 2, 
+        axis=-1
+    )  # (B, T, 30, 30, 10)
+    best_color = jnp.argmin(all_distances, axis=-1)  # (B, T, 30, 30)
+    
+    # Create valid region mask based on grid dimensions
+    y_coords = jnp.arange(30)[None, None, :, None]  # (1, 1, 30, 1)
+    x_coords = jnp.arange(30)[None, None, None, :]  # (1, 1, 1, 30)
+    height = test_grid_height[:, :, None, None]  # (B, T, 1, 1)
+    width = test_grid_width[:, :, None, None]     # (B, T, 1, 1)
+    valid_mask = ((y_coords < height) & (x_coords < width)).astype(jnp.float32)  # (B, T, 30, 30)
+    
+    # Handle both scalar color_idx and (B, T) array
+    if isinstance(color_idx, int):
+        # Position has this color if best match is this color_idx
+        has_color = (best_color == color_idx).astype(jnp.float32)  # (B, T, 30, 30)
+    else:
+        # color_idx is (B, T) array - need to index for each batch/time
+        color_idx_expanded = color_idx[:, :, None, None]  # (B, T, 1, 1)
+        has_color = (best_color == color_idx_expanded).astype(jnp.float32)  # (B, T, 30, 30)
+    
+    # Count pixels: valid AND has this color
+    color_positions = valid_mask * has_color  # (B, T, 30, 30)
+    color_count = color_positions.sum(axis=(2, 3))  # (B, T)
+    
+    return color_count
+
+
 
 class Agent(embodied.jax.Agent):
 
@@ -341,6 +407,9 @@ class Agent(embodied.jax.Agent):
     sel_outs = {k: d1 for k in sel_spaces.keys()}  # categorical for all
     self.sel = embodied.jax.MLPHead(sel_spaces, sel_outs, **config.policy, name='sel')
 
+    # Color count prediction head - predicts number of pixels for current color
+    self.color_count = embodied.jax.MLPHead(scalar, **config.value, name='color_count')
+
     self.val = embodied.jax.MLPHead(scalar, **config.value, name='val')
     self.slowval = embodied.jax.SlowModel(
         embodied.jax.MLPHead(scalar, **config.value, name='slowval'),
@@ -351,7 +420,7 @@ class Agent(embodied.jax.Agent):
     self.advnorm = embodied.jax.Normalize(**config.advnorm, name='advnorm')
 
     self.modules = [
-        self.dyn, self.enc, self.dec, self.rew, self.con, self.pol, self.sel, self.val]
+        self.dyn, self.enc, self.dec, self.rew, self.con, self.pol, self.sel, self.color_count, self.val]
     self.opt = embodied.jax.Optimizer(
         self.modules, self._make_opt(**config.opt), summary_depth=1,
         name='opt')
@@ -368,6 +437,8 @@ class Agent(embodied.jax.Agent):
       scales['sel_color'] = 1.0
     if 'sel_position' not in scales:
       scales['sel_position'] = 1.0
+    if 'color_count' not in scales:
+      scales['color_count'] = 1.0
     self.scales = scales
 
   @property
@@ -584,6 +655,17 @@ class Agent(embodied.jax.Agent):
       # Supervise position with color-conditional heatmap targets
       # This teaches: "Given you picked color X, paint at positions where X appears in target"
       losses['sel_position'] = -(position_target_conditional * jnp.log(position_probs + eps)).sum(axis=-1)
+
+      # Supervised color count loss
+      # Predict how many pixels of the current color appear in the target
+      count_pred = self.color_count(self.feat2tensor(repfeat), 2).pred()  # (B, T)
+      count_target = compute_color_count_target(
+          obs['target_pair'], 
+          obs['test_grid_height'], 
+          obs['test_grid_width'],
+          selected_color  # Use current_color from obs
+      )  # (B, T)
+      losses['color_count'] = (count_pred - count_target) ** 2  # MSE
 
 
     B, T = reset.shape
