@@ -26,6 +26,7 @@ class ARC(embodied.Env):
     3. PAINT Phase:
        - 'paint' action: Paint with the currently selected color
        - 'done' action: Finish with this color → transitions back to COLOR_SELECT
+       - Agent MUST paint at least once before done is allowed
        - Agent can paint multiple times before pressing done
     
     DONE ACTION BEHAVIOR:
@@ -477,9 +478,10 @@ class ARC(embodied.Env):
         
         PHASE SYSTEM:
         - SETUP phase: Only resize action is valid. After resize → COLOR_SELECT phase.
-        - COLOR_SELECT phase: Only set_color action is valid. After set_color → PAINT phase.
-        - PAINT phase: Only paint actions are valid. Agent must paint with current color.
-          When agent takes 'done' action OR no more valid positions → COLOR_SELECT phase.
+        - COLOR_SELECT phase: Only set_color or done actions are valid. After set_color → PAINT phase.
+        - PAINT phase: Only paint or done actions are valid. Agent must paint with current color.
+          Agent MUST paint at least once before 'done' action is allowed.
+          When agent takes 'done' action (after painting) → COLOR_SELECT phase.
         """
         # Convert all action values to Python integers at the start
         action_type = int(action['action_type'])
@@ -606,6 +608,15 @@ class ARC(embodied.Env):
                     pass
             
             elif action_type == 2:  # Done action - explicit exit from painting
+                # Must paint at least once before transitioning back to COLOR_SELECT
+                if self.paints_in_current_phase == 0:
+                    self.last_action_valid = False
+                    self.invalid_action_count += 1
+                    if 'done_before_painting' not in self.invalid_action_types:
+                        self.invalid_action_types['done_before_painting'] = 0
+                    self.invalid_action_types['done_before_painting'] += 1
+                    return
+                
                 # TRANSITION: PAINT → COLOR_SELECT (or end episode if done with all)
                 # For now, allow re-entering color select to change colors
                 self.phase = 'COLOR_SELECT'
@@ -873,11 +884,11 @@ class ARC(embodied.Env):
         
         elif self.phase == 'PAINT':
             # In PAINT: paint (if positions available) and done are valid
-            # Done transitions back to COLOR_SELECT (or ends episode if no positions)
+            # Done transitions back to COLOR_SELECT only after painting at least once
             obs['valid_actions'] = np.array([
                 1 if has_any_valid_positions == 1 else 0,  # [0] paint
                 0,  # [1] resize (not allowed in PAINT phase)
-                1,  # [2] done (always allowed in PAINT to transition back)
+                1 if self.paints_in_current_phase > 0 else 0,  # [2] done (only after painting at least once)
                 0,  # [3] set_color (not allowed in PAINT phase)
             ], dtype=np.int32)
         
