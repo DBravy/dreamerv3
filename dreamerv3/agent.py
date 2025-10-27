@@ -466,8 +466,9 @@ class Agent(embodied.jax.Agent):
     act = sample(policy)
     
     # Convert position index back to x,y coordinates for the environment
+    # Remove 'position' from dict since environment only expects x,y
     if 'position' in act:
-      position_idx = i32(act['position'])  # (B,) values in [0, 899]
+      position_idx = i32(act.pop('position'))  # (B,) values in [0, 899], remove from dict
       # Convert flat index to (y, x) coordinates: position = y * 30 + x
       act['y'] = position_idx // 30  # row
       act['x'] = position_idx % 30   # column
