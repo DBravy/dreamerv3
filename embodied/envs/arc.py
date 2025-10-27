@@ -8,6 +8,35 @@ import numpy as np
 
 
 class ARC(embodied.Env):
+    """
+    ARC Environment with enforced phase-based task structure.
+    
+    PHASE SYSTEM:
+    The environment enforces a structured workflow that mirrors human problem-solving:
+    
+    1. SETUP Phase:
+       - Only 'resize' action is valid
+       - Agent must set the output grid dimensions
+       - Transitions to COLOR_SELECT after successful resize
+    
+    2. COLOR_SELECT Phase:
+       - Only 'set_color' action is valid (or 'done' if no positions remain)
+       - Agent selects which color to work on next
+       - Transitions to PAINT after selecting a color
+    
+    3. PAINT Phase:
+       - Only 'paint' and 'done' actions are valid
+       - Agent must paint with the currently selected color
+       - 'done' action transitions back to COLOR_SELECT (allows picking new color)
+       - Episode ends only when time limit reached or done pressed with no work remaining
+    
+    This structure ensures agents work on one color at a time (subtask-oriented),
+    preventing the pathological behavior of constantly switching between colors
+    without completing any single color placement.
+    
+    Observations include 'current_phase' (0=SETUP, 1=COLOR_SELECT, 2=PAINT) which
+    can be used by the agent to condition behavior on the current phase.
+    """
     
     # ARC color palette (RGB values for colors 0-9)
     COLOR_MAP = {
@@ -101,6 +130,11 @@ class ARC(embodied.Env):
         
         # NEW: Track which colors have been selected (for reward purposes)
         self.selected_colors = set()  # Colors that have been chosen at least once
+        
+        # PHASE SYSTEM: Track current phase of task execution
+        # Phases: 'SETUP' (resize) → 'COLOR_SELECT' (pick color) → 'PAINT' (paint with color) → repeat COLOR_SELECT/PAINT
+        self.phase = 'SETUP'  # Start in setup phase
+        self.paints_in_current_phase = 0  # Count paints in current PAINT phase
         
         # Track action validity
         self.last_action_valid = True
@@ -230,6 +264,7 @@ class ARC(embodied.Env):
             'num_valid_pairs': elements.Space(np.int32, (), 0, 5),  # How many of pair_1-5 are real (0-5)
         'valid_actions': elements.Space(np.int32, (4,), 0, 1),  # Mask for [paint, resize, done, set_color] matching action_type indices
         'current_color': elements.Space(np.int32, (), 0, 9),  # Currently selected color (0-9)
+        'current_phase': elements.Space(np.int32, (), 0, 2),  # Current phase: 0=SETUP, 1=COLOR_SELECT, 2=PAINT
         'valid_colors': elements.Space(np.int32, (10,), 0, 1),  # Mask for colors 0-9 (0=invalid, 1=valid)
         'reward': elements.Space(np.float32),
             'is_first': elements.Space(bool),
@@ -301,10 +336,20 @@ class ARC(embodied.Env):
         self.previous_content_accuracy = current_content_accuracy
         
         # Check if done
+        # Episode ends when:
+        # 1. Time limit reached, OR
+        # 2. Done action pressed from PAINT phase when no valid positions remain
+        h, w = self.current_output.shape
+        has_valid_positions = any((x, y) not in self.painted_positions 
+                                   for y in range(h) for x in range(w))
+        
         is_done = (
-            action['action_type'] == 2 or  # "done" action
-            self.step_count >= self.length
+            self.step_count >= self.length or  # Time limit
+            (action['action_type'] == 2 and self.phase == 'COLOR_SELECT' and not has_valid_positions)  # Done with no work left
         )
+        
+        # Note: Done action in PAINT phase transitions to COLOR_SELECT (handled in _execute_action)
+        # This allows agent to pick a new color and continue painting
         
         # Save episode data when episode ends
         if is_done:
@@ -380,6 +425,10 @@ class ARC(embodied.Env):
         self.selected_colors = set()  # Reset selected colors tracking
         self.selected_colors.add(1)  # Blue is selected by default
         
+        # PHASE SYSTEM: Reset to SETUP phase
+        self.phase = 'SETUP'
+        self.paints_in_current_phase = 0
+        
         # Count how many of each color appear in the target grid
         self.target_color_counts = {}
         self.rewarded_color_counts = {}
@@ -419,7 +468,15 @@ class ARC(embodied.Env):
         return obs
     
     def _execute_action(self, action):
-        """Modify the current_output grid based on action."""
+        """
+        Modify the current_output grid based on action.
+        
+        PHASE SYSTEM:
+        - SETUP phase: Only resize action is valid. After resize → COLOR_SELECT phase.
+        - COLOR_SELECT phase: Only set_color action is valid. After set_color → PAINT phase.
+        - PAINT phase: Only paint actions are valid. Agent must paint with current color.
+          When agent takes 'done' action OR no more valid positions → COLOR_SELECT phase.
+        """
         # Convert all action values to Python integers at the start
         action_type = int(action['action_type'])
         x = int(action['x'])
@@ -427,81 +484,20 @@ class ARC(embodied.Env):
         
         # Assume action is valid until proven otherwise
         self.last_action_valid = True
-
-        # Enforce strict step order for the first two steps:
-        # Step 0: must be resize; Step 1: must be set_color.
-        if self.step_count == 0 and action_type != 1:
-            self.last_action_valid = False
-            self.invalid_action_count += 1
-            if 'first_step_not_resize' not in self.invalid_action_types:
-                self.invalid_action_types['first_step_not_resize'] = 0
-            self.invalid_action_types['first_step_not_resize'] += 1
-            return
-        if self.step_count == 1 and action_type != 3:
-            self.last_action_valid = False
-            self.invalid_action_count += 1
-            if 'second_step_not_set_color' not in self.invalid_action_types:
-                self.invalid_action_types['second_step_not_set_color'] = 0
-            self.invalid_action_types['second_step_not_set_color'] += 1
-            return
         
-        if action_type == 0:  # Paint (using current_color)
-            # Check if resize has been done first
-            if not self.has_resized:
+        # PHASE-BASED ACTION VALIDATION
+        if self.phase == 'SETUP':
+            # In SETUP phase: only resize is allowed
+            if action_type != 1:  # Not resize
                 self.last_action_valid = False
                 self.invalid_action_count += 1
-                if 'paint_before_resize' not in self.invalid_action_types:
-                    self.invalid_action_types['paint_before_resize'] = 0
-                self.invalid_action_types['paint_before_resize'] += 1
-                return
-            # Require explicit color selection before painting
-            if not self.has_selected_color:
-                self.last_action_valid = False
-                self.invalid_action_count += 1
-                if 'paint_before_color' not in self.invalid_action_types:
-                    self.invalid_action_types['paint_before_color'] = 0
-                self.invalid_action_types['paint_before_color'] += 1
-                return
-            
-            # Check if position is out of bounds
-            h, w = self.current_output.shape
-            if x >= w or y >= h or x < 0 or y < 0:
-                self.last_action_valid = False
-                self.invalid_action_count += 1
-                self.invalid_action_types['paint_oob'] += 1
-                return
-            
-            # Check if position already painted
-            if (x, y) in self.painted_positions:
-                self.last_action_valid = False
-                self.invalid_action_count += 1
-                self.invalid_action_types['paint_duplicate'] += 1
-                return
-            
-            # Check if painting the same color that's already at this position
-            if self.current_output[y, x] == self.current_color:
-                self.last_action_valid = False
-                self.invalid_action_count += 1
-                if 'paint_same_color' not in self.invalid_action_types:
-                    self.invalid_action_types['paint_same_color'] = 0
-                self.invalid_action_types['paint_same_color'] += 1
-                return
-            
-            # Valid paint action - execute it using current_color
-            self.current_output[y, x] = self.current_color  # NumPy arrays are [row, col] = [y, x]
-            self.painted_positions.add((x, y))
-        
-        elif action_type == 1:  # Resize
-            # Check if resize has already been used
-            if self.has_resized:
-                self.last_action_valid = False
-                self.invalid_action_count += 1
-                self.invalid_action_types['resize_duplicate'] += 1
+                if 'wrong_action_in_setup' not in self.invalid_action_types:
+                    self.invalid_action_types['wrong_action_in_setup'] = 0
+                self.invalid_action_types['wrong_action_in_setup'] += 1
                 return
             
             # Valid resize action - execute it
             # Agent outputs 0-29, add 1 to get actual dimensions 1-30
-            # This ensures no zero-dimensional grids and consistent encoding
             new_height = int(np.clip(action['height'] + 1, 1, 30))
             new_width = int(np.clip(action['width'] + 1, 1, 30))
             
@@ -516,32 +512,111 @@ class ARC(embodied.Env):
             
             self.current_output = new_grid
             self.has_resized = True
+            self.painted_positions.clear()  # Clear painted positions on resize
             
-            # Note: When resizing, we clear the painted_positions set since
-            # the grid dimensions have changed and positions may no longer be valid.
-            # This allows repainting at the same coordinates in the new grid size.
-            self.painted_positions.clear()
+            # TRANSITION: SETUP → COLOR_SELECT
+            self.phase = 'COLOR_SELECT'
         
-        elif action_type == 3:  # Set color
-            # Disallow selecting a color before resize
-            if not self.has_resized:
+        elif self.phase == 'COLOR_SELECT':
+            # In COLOR_SELECT phase: set_color or done (if no more work) is allowed
+            if action_type == 3:  # Set color
+                # Valid set_color action - execute it
+                color = int(action['color'])
+                new_color = np.clip(color, 0, 9)  # Ensure color is in valid range
+                self.current_color = new_color
+                
+                # Track this color as selected (for reward calculation)
+                self.selected_colors.add(new_color)
+                self.has_selected_color = True
+                
+                # TRANSITION: COLOR_SELECT → PAINT
+                self.phase = 'PAINT'
+                self.paints_in_current_phase = 0  # Reset paint counter
+            
+            elif action_type == 2:  # Done action
+                # Done is only valid if no more positions to paint
+                # This will end the episode (handled in step() method)
+                # No phase transition needed - episode ends
+                pass
+            
+            else:
+                # Wrong action type in COLOR_SELECT phase
                 self.last_action_valid = False
                 self.invalid_action_count += 1
-                if 'set_color_before_resize' not in self.invalid_action_types:
-                    self.invalid_action_types['set_color_before_resize'] = 0
-                self.invalid_action_types['set_color_before_resize'] += 1
+                if 'wrong_action_in_color_select' not in self.invalid_action_types:
+                    self.invalid_action_types['wrong_action_in_color_select'] = 0
+                self.invalid_action_types['wrong_action_in_color_select'] += 1
                 return
-            # Update the current color
-            color = int(action['color'])
-            new_color = np.clip(color, 0, 9)  # Ensure color is in valid range
-            self.current_color = new_color
-            
-            # Track this color as selected (for reward calculation)
-            self.selected_colors.add(new_color)
-            # Mark that an explicit color has been selected (even if black)
-            self.has_selected_color = True
         
-        # action_type == 2 is "done", no grid modification (always valid)
+        elif self.phase == 'PAINT':
+            # In PAINT phase: paint OR done actions are allowed
+            if action_type == 0:  # Paint action
+                # Check if position is out of bounds
+                h, w = self.current_output.shape
+                if x >= w or y >= h or x < 0 or y < 0:
+                    self.last_action_valid = False
+                    self.invalid_action_count += 1
+                    if 'paint_oob' not in self.invalid_action_types:
+                        self.invalid_action_types['paint_oob'] = 0
+                    self.invalid_action_types['paint_oob'] += 1
+                    return
+                
+                # Check if position already painted
+                if (x, y) in self.painted_positions:
+                    self.last_action_valid = False
+                    self.invalid_action_count += 1
+                    if 'paint_duplicate' not in self.invalid_action_types:
+                        self.invalid_action_types['paint_duplicate'] = 0
+                    self.invalid_action_types['paint_duplicate'] += 1
+                    return
+                
+                # Check if painting the same color that's already at this position
+                if self.current_output[y, x] == self.current_color:
+                    self.last_action_valid = False
+                    self.invalid_action_count += 1
+                    if 'paint_same_color' not in self.invalid_action_types:
+                        self.invalid_action_types['paint_same_color'] = 0
+                    self.invalid_action_types['paint_same_color'] += 1
+                    return
+                
+                # Valid paint action - execute it using current_color
+                self.current_output[y, x] = self.current_color  # NumPy arrays are [row, col] = [y, x]
+                self.painted_positions.add((x, y))
+                self.paints_in_current_phase += 1
+                
+                # Check if we should auto-transition back to COLOR_SELECT
+                # Option 1: Check if no more valid positions to paint (any color)
+                h, w = self.current_output.shape
+                has_valid_positions = False
+                for yy in range(h):
+                    for xx in range(w):
+                        if (xx, yy) not in self.painted_positions:
+                            has_valid_positions = True
+                            break
+                    if has_valid_positions:
+                        break
+                
+                if not has_valid_positions:
+                    # No more positions to paint anywhere - stay in PAINT phase, 
+                    # agent must use 'done' action to end episode
+                    pass
+            
+            elif action_type == 2:  # Done action - explicit exit from painting
+                # TRANSITION: PAINT → COLOR_SELECT (or end episode if done with all)
+                # For now, allow re-entering color select to change colors
+                self.phase = 'COLOR_SELECT'
+            
+            else:
+                # Wrong action type in PAINT phase
+                self.last_action_valid = False
+                self.invalid_action_count += 1
+                if 'wrong_action_in_paint' not in self.invalid_action_types:
+                    self.invalid_action_types['wrong_action_in_paint'] = 0
+                self.invalid_action_types['wrong_action_in_paint'] += 1
+                return
+        
+        # action_type == 2 outside PAINT phase is handled by allowing episode termination
+        # in the step() method
     
     def _calculate_reward(self, new_useful_color=False):
         """
@@ -773,16 +848,41 @@ class ARC(embodied.Env):
         
         obs['valid_positions'] = valid_positions
         
-        # Action availability mask: [paint, resize, done, set_color] matching action_type indices [0, 1, 2, 3]
-        # Enforce: step 0 must be resize; step 1 must be set_color; painting requires resize, explicit color selection,
-        # and at least one valid unpainted position. If no valid positions remain, only 'done' is allowed.
+        # Action availability mask based on CURRENT PHASE
+        # valid_actions: [paint, resize, done, set_color] matching action_type indices [0, 1, 2, 3]
         has_any_valid_positions = np.int32(obs['valid_positions'].sum() > 0)
-        obs['valid_actions'] = np.array([
-            1 if (self.has_resized and self.has_selected_color and self.step_count >= 2 and has_any_valid_positions == 1) else 0,  # [0] paint
-            1 if (self.step_count == 0 and not self.has_resized) else 0,  # [1] resize ONLY on step 0
-            1 if (self.step_count >= 10 or has_any_valid_positions == 0) else 0,  # [2] done allowed if no paints left
-            1 if (self.step_count >= 1 and has_any_valid_positions == 1) else 0,  # [3] set_color only when painting is possible
-        ], dtype=np.int32)
+        
+        if self.phase == 'SETUP':
+            # In SETUP: only resize is valid
+            obs['valid_actions'] = np.array([0, 1, 0, 0], dtype=np.int32)
+        
+        elif self.phase == 'COLOR_SELECT':
+            # In COLOR_SELECT: set_color is valid, and done is valid if no more positions
+            obs['valid_actions'] = np.array([
+                0,  # [0] paint (not in this phase)
+                0,  # [1] resize (not in this phase)
+                1 if has_any_valid_positions == 0 else 0,  # [2] done (only if no work left)
+                1,  # [3] set_color (always valid in this phase)
+            ], dtype=np.int32)
+        
+        elif self.phase == 'PAINT':
+            # In PAINT: paint (if positions available) and done are valid
+            # Done transitions back to COLOR_SELECT (or ends episode if no positions)
+            obs['valid_actions'] = np.array([
+                1 if has_any_valid_positions == 1 else 0,  # [0] paint
+                0,  # [1] resize (not allowed in PAINT phase)
+                1,  # [2] done (always allowed in PAINT to transition back)
+                0,  # [3] set_color (not allowed in PAINT phase)
+            ], dtype=np.int32)
+        
+        else:
+            # Fallback (should never happen)
+            obs['valid_actions'] = np.array([0, 0, 1, 0], dtype=np.int32)
+        
+        # Add current phase to observation
+        # Encode as: 0=SETUP, 1=COLOR_SELECT, 2=PAINT
+        phase_map = {'SETUP': 0, 'COLOR_SELECT': 1, 'PAINT': 2}
+        obs['current_phase'] = np.int32(phase_map.get(self.phase, 0))
         
         # Add current color to observation
         obs['current_color'] = np.int32(self.current_color)
