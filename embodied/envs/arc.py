@@ -643,6 +643,7 @@ class ARC(embodied.Env):
                 # AUTO-TRANSITION: When remaining count reaches 0, return to COLOR_SELECT
                 if self.remaining_paint_count <= 0:
                     self.phase = 'COLOR_SELECT'
+                    self.remaining_paint_count = 0  # Reset to 0 for clean state
             
             elif action_type == 2:  # Done action - no longer needed, but handle gracefully
                 # Allow done action to also transition back to COLOR_SELECT
@@ -657,6 +658,7 @@ class ARC(embodied.Env):
                 
                 # TRANSITION: PAINT → COLOR_SELECT
                 self.phase = 'COLOR_SELECT'
+                self.remaining_paint_count = 0  # Reset to 0 for clean state
             
             else:
                 # Wrong action type in PAINT phase
@@ -944,7 +946,8 @@ class ARC(embodied.Env):
         
         # Add remaining paint count to observation
         # This tells the agent how many more times it needs to paint with the current color
-        obs['remaining_paint_count'] = np.int32(self.remaining_paint_count)
+        # Clamp to 0 to ensure it's always non-negative (can temporarily go negative during transitions)
+        obs['remaining_paint_count'] = np.int32(max(0, self.remaining_paint_count))
         
         # Color mask: disable black (color 0), enable all others (1-9)
         obs['valid_colors'] = np.array([0, 1, 1, 1, 1, 1, 1, 1, 1, 1], dtype=np.int32)
