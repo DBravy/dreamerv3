@@ -451,16 +451,16 @@ class Agent(embodied.jax.Agent):
         'height': elements.Space(np.int32, (), 0, 30),
         'color': elements.Space(np.int32, (), 0, 10),
         # Color count heads: one per color, predicting count in range [0, 4]
-        'count_0': elements.Space(np.int32, (), 0, 10),  # Black count
-        'count_1': elements.Space(np.int32, (), 0, 10),  # Blue count
-        'count_2': elements.Space(np.int32, (), 0, 10),  # Red count
-        'count_3': elements.Space(np.int32, (), 0, 10),  # Green count
-        'count_4': elements.Space(np.int32, (), 0, 10),  # Yellow count
-        'count_5': elements.Space(np.int32, (), 0, 10),  # Gray count
-        'count_6': elements.Space(np.int32, (), 0, 10),  # Magenta count
-        'count_7': elements.Space(np.int32, (), 0, 10),  # Orange count
-        'count_8': elements.Space(np.int32, (), 0, 10),  # Light Blue count
-        'count_9': elements.Space(np.int32, (), 0, 10),  # Maroon count
+        'count_0': elements.Space(np.int32, (), 0, 5),  # Black count
+        'count_1': elements.Space(np.int32, (), 0, 5),  # Blue count
+        'count_2': elements.Space(np.int32, (), 0, 5),  # Red count
+        'count_3': elements.Space(np.int32, (), 0, 5),  # Green count
+        'count_4': elements.Space(np.int32, (), 0, 5),  # Yellow count
+        'count_5': elements.Space(np.int32, (), 0, 5),  # Gray count
+        'count_6': elements.Space(np.int32, (), 0, 5),  # Magenta count
+        'count_7': elements.Space(np.int32, (), 0, 5),  # Orange count
+        'count_8': elements.Space(np.int32, (), 0, 5),  # Light Blue count
+        'count_9': elements.Space(np.int32, (), 0, 5),  # Maroon count
     }
     sel_outs = {k: d1 for k in sel_spaces.keys()}  # categorical for all
     self.sel = embodied.jax.MLPHead(sel_spaces, sel_outs, **config.policy, name='sel')
@@ -713,7 +713,7 @@ class Agent(embodied.jax.Agent):
         
         # Ordinal loss: penalizes predictions proportionally to distance from target
         # This makes the model learn that 4 is closer to 5 than 0 is to 5
-        losses[f'sel_{count_key}'] = ordinal_loss(count_dist, target_count, num_classes=10)
+        losses[f'sel_{count_key}'] = ordinal_loss(count_dist, target_count, num_classes=5)
       
       # NEW: Color-conditional position supervision using joint heatmap
       # Compute position heatmap targets for each color (10 colors)
