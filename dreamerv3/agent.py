@@ -713,7 +713,7 @@ class Agent(embodied.jax.Agent):
         
         # Ordinal loss: penalizes predictions proportionally to distance from target
         # This makes the model learn that 4 is closer to 5 than 0 is to 5
-        losses[f'sel_{count_key}'] = ordinal_loss(count_dist, target_count, num_classes=5)
+        losses[f'sel_{count_key}'] = ordinal_loss(count_dist, target_count, num_classes=10)
       
       # NEW: Color-conditional position supervision using joint heatmap
       # Compute position heatmap targets for each color (10 colors)
