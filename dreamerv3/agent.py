@@ -83,7 +83,7 @@ def compute_color_count_target(target_pair, test_grid_height, test_grid_width):
         test_grid_width: (B, T) actual grid width (1-30)
     
     Returns:
-        color_counts: (B, T, 10) - count of each color (0-9), normalized to [0, 30]
+        color_counts: (B, T, 10) - count of each color (0-9), normalized to [0, 4]
     """
     # Extract right half (target output)
     B, T, H, W2, C = target_pair.shape
@@ -131,9 +131,9 @@ def compute_color_count_target(target_pair, test_grid_height, test_grid_width):
         count = (is_color * valid_mask).sum(axis=(2, 3))  # (B, T)
         color_counts = color_counts.at[:, :, color_idx].set(count)
     
-    # Clip counts to [0, 30] range for categorical prediction
+    # Clip counts to [0, 4] range for categorical prediction
     # (most ARC grids are smaller, and this gives reasonable discretization)
-    color_counts = jnp.clip(color_counts, 0, 30)
+    color_counts = jnp.clip(color_counts, 0, 4)
     
     return color_counts
 
@@ -402,17 +402,17 @@ class Agent(embodied.jax.Agent):
         'width': elements.Space(np.int32, (), 0, 30),
         'height': elements.Space(np.int32, (), 0, 30),
         'color': elements.Space(np.int32, (), 0, 10),
-        # Color count heads: one per color, predicting count in range [0, 30]
-        'count_0': elements.Space(np.int32, (), 0, 31),  # Black count
-        'count_1': elements.Space(np.int32, (), 0, 31),  # Blue count
-        'count_2': elements.Space(np.int32, (), 0, 31),  # Red count
-        'count_3': elements.Space(np.int32, (), 0, 31),  # Green count
-        'count_4': elements.Space(np.int32, (), 0, 31),  # Yellow count
-        'count_5': elements.Space(np.int32, (), 0, 31),  # Gray count
-        'count_6': elements.Space(np.int32, (), 0, 31),  # Magenta count
-        'count_7': elements.Space(np.int32, (), 0, 31),  # Orange count
-        'count_8': elements.Space(np.int32, (), 0, 31),  # Light Blue count
-        'count_9': elements.Space(np.int32, (), 0, 31),  # Maroon count
+        # Color count heads: one per color, predicting count in range [0, 4]
+        'count_0': elements.Space(np.int32, (), 0, 5),  # Black count
+        'count_1': elements.Space(np.int32, (), 0, 5),  # Blue count
+        'count_2': elements.Space(np.int32, (), 0, 5),  # Red count
+        'count_3': elements.Space(np.int32, (), 0, 5),  # Green count
+        'count_4': elements.Space(np.int32, (), 0, 5),  # Yellow count
+        'count_5': elements.Space(np.int32, (), 0, 5),  # Gray count
+        'count_6': elements.Space(np.int32, (), 0, 5),  # Magenta count
+        'count_7': elements.Space(np.int32, (), 0, 5),  # Orange count
+        'count_8': elements.Space(np.int32, (), 0, 5),  # Light Blue count
+        'count_9': elements.Space(np.int32, (), 0, 5),  # Maroon count
     }
     sel_outs = {k: d1 for k in sel_spaces.keys()}  # categorical for all
     self.sel = embodied.jax.MLPHead(sel_spaces, sel_outs, **config.policy, name='sel')
@@ -653,12 +653,12 @@ class Agent(embodied.jax.Agent):
       losses['sel_color'] = -(color_target * jnp.log(color_probs + eps)).sum(axis=-1)
       
       # Supervise color count heads
-      # For each color, predict its count as a categorical distribution over [0, 30]
+      # For each color, predict its count as a categorical distribution over [0, 4]
       for color_idx in range(10):
         count_key = f'count_{color_idx}'
-        # Target count for this color (clipped to [0, 30])
+        # Target count for this color (clipped to [0, 4])
         target_count = color_counts_target[:, :, color_idx].astype(jnp.int32)  # (B, T)
-        target_count = jnp.clip(target_count, 0, 30)  # Ensure in valid range
+        target_count = jnp.clip(target_count, 0, 4)  # Ensure in valid range
         
         # Predicted distribution for this color's count
         count_dist = sel_pred[count_key]
