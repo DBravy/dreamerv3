@@ -566,7 +566,15 @@ class ARC(embodied.Env):
             if action_type == 3:  # Set color
                 # Valid set_color action - execute it
                 color = int(action['color'])
-                new_color = np.clip(color, 0, 9)  # Ensure color is in valid range
+                new_color = np.clip(color, 0, 9) 
+                        # CHECK: Prevent re-selecting already used colors
+                if new_color in self.selected_colors:
+                    self.last_action_valid = False
+                    self.invalid_action_count += 1
+                    if 'color_reselection' not in self.invalid_action_types:
+                        self.invalid_action_types['color_reselection'] = 0
+                    self.invalid_action_types['color_reselection'] += 1
+                    return # Ensure color is in valid range
                 self.current_color = new_color
                 
                 # Track this color as selected (for reward calculation)
