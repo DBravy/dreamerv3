@@ -556,11 +556,13 @@ class Agent(embodied.jax.Agent):
       act['y'] = position_idx // 30  # row
       act['x'] = position_idx % 30   # column
     
-    # Remove count predictions from actions - they're only for supervised learning, not environment actions
-    for i in range(10):
-      act.pop(f'count_{i}', None)
+    # KEEP count predictions in actions - they're needed by the environment for constrained painting
+    # The environment will use these to determine how many times to paint with each color
+    # for i in range(10):
+    #   act.pop(f'count_{i}', None)
     
     out = {}
+
     out['finite'] = elements.tree.flatdict(jax.tree.map(
         lambda x: jnp.isfinite(x).all(range(1, x.ndim)),
         dict(obs=obs, carry=carry, tokens=tokens, feat=feat, act=act)))

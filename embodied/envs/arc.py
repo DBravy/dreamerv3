@@ -9,7 +9,7 @@ import numpy as np
 
 class ARC(embodied.Env):
     """
-    ARC Environment with enforced phase-based task structure.
+    ARC Environment with enforced phase-based task structure and constrained color painting.
     
     PHASE SYSTEM:
     The environment enforces a structured workflow that mirrors human problem-solving:
@@ -21,28 +21,34 @@ class ARC(embodied.Env):
     
     2. COLOR_SELECT Phase:
        - 'set_color' action: Pick a color to work on → transitions to PAINT
+         * Agent must provide count predictions (count_0 through count_9) with set_color action
+         * The count for the selected color determines how many times to paint
        - 'done' action: Submit answer and end episode (voluntary stopping)
     
     3. PAINT Phase:
        - 'paint' action: Paint with the currently selected color
-       - 'done' action: Finish with this color → transitions back to COLOR_SELECT
-       - Agent MUST paint at least once before done is allowed
-       - Agent can paint multiple times before pressing done
+       - AUTOMATIC TRANSITION: After painting N times (where N = count prediction for current color),
+         automatically returns to COLOR_SELECT
+       - 'done' action: Also allowed for backward compatibility (manual transition)
+    
+    CONSTRAINED PAINTING:
+    The policy is constrained by the color count selection heads. When a color is selected,
+    the environment uses the count prediction for that color (from count_0 to count_9 heads)
+    to determine exactly how many times the agent should paint with that color before
+    automatically transitioning back to COLOR_SELECT. This removes the burden on the
+    policy head to learn when to stop painting each color.
     
     DONE ACTION BEHAVIOR:
-    - Done in PAINT phase → Return to COLOR_SELECT (work on another color)
+    - Done in PAINT phase → Return to COLOR_SELECT (work on another color) [optional, auto-transitions]
     - Done in COLOR_SELECT phase → Submit answer and end episode
     
-    This two-level done system allows agents to:
-    1. Finish working on one color (done in PAINT)
-    2. Submit their final answer when satisfied (done in COLOR_SELECT)
+    This structure ensures agents work on one color at a time with a predetermined count,
+    preventing pathological behavior and making learning more tractable.
     
-    This structure ensures agents work on one color at a time (subtask-oriented),
-    preventing the pathological behavior of constantly switching between colors
-    without completing any single color placement.
-    
-    Observations include 'current_phase' (0=SETUP, 1=COLOR_SELECT, 2=PAINT) which
-    can be used by the agent to condition behavior on the current phase.
+    Observations include:
+    - 'current_phase' (0=SETUP, 1=COLOR_SELECT, 2=PAINT)
+    - 'current_color' (0-9)
+    - 'remaining_paint_count' (how many more paints needed for current color)
     """
     
     # ARC color palette (RGB values for colors 0-9)
@@ -142,6 +148,10 @@ class ARC(embodied.Env):
         # Phases: 'SETUP' (resize) → 'COLOR_SELECT' (pick color) → 'PAINT' (paint with color) → repeat COLOR_SELECT/PAINT
         self.phase = 'SETUP'  # Start in setup phase
         self.paints_in_current_phase = 0  # Count paints in current PAINT phase
+        
+        # NEW: Track expected paint count for current color
+        self.expected_paint_count = 0  # How many times we should paint with current color
+        self.remaining_paint_count = 0  # How many paints are left for current color
         
         # Track action validity
         self.last_action_valid = True
@@ -272,6 +282,7 @@ class ARC(embodied.Env):
         'valid_actions': elements.Space(np.int32, (4,), 0, 1),  # Mask for [paint, resize, done, set_color] matching action_type indices
         'current_color': elements.Space(np.int32, (), 0, 9),  # Currently selected color (0-9)
         'current_phase': elements.Space(np.int32, (), 0, 2),  # Current phase: 0=SETUP, 1=COLOR_SELECT, 2=PAINT
+        'remaining_paint_count': elements.Space(np.int32, (), 0, 900),  # How many more paints needed for current color (0-900, though typically 0-30)
         'valid_colors': elements.Space(np.int32, (10,), 0, 1),  # Mask for colors 0-9 (0=invalid, 1=valid)
         'reward': elements.Space(np.float32),
             'is_first': elements.Space(bool),
@@ -290,6 +301,17 @@ class ARC(embodied.Env):
             'color': elements.Space(np.int32, (), 0, 9),  # Used only for set_color action
             'width': elements.Space(np.int32, (), 0, 30),   # Target width for resize (0-29 output, maps to 1-30 actual)
             'height': elements.Space(np.int32, (), 0, 30),  # Target height for resize (0-29 output, maps to 1-30 actual)
+            # Count predictions for each color (0-30) - used to determine how many times to paint each color
+            'count_0': elements.Space(np.int32, (), 0, 31),  # Black count
+            'count_1': elements.Space(np.int32, (), 0, 31),  # Blue count
+            'count_2': elements.Space(np.int32, (), 0, 31),  # Red count
+            'count_3': elements.Space(np.int32, (), 0, 31),  # Green count
+            'count_4': elements.Space(np.int32, (), 0, 31),  # Yellow count
+            'count_5': elements.Space(np.int32, (), 0, 31),  # Gray count
+            'count_6': elements.Space(np.int32, (), 0, 31),  # Magenta count
+            'count_7': elements.Space(np.int32, (), 0, 31),  # Orange count
+            'count_8': elements.Space(np.int32, (), 0, 31),  # Light Blue count
+            'count_9': elements.Space(np.int32, (), 0, 31),  # Maroon count
             'reset': elements.Space(bool),
         }
     
@@ -313,10 +335,18 @@ class ARC(embodied.Env):
             'height': int(action['height']),
             'current_color': int(self.current_color),  # Track what color was active
         }
+        
+        # Extract count predictions if present (for constrained color painting)
+        count_predictions = {}
+        for i in range(10):
+            count_key = f'count_{i}'
+            if count_key in action:
+                count_predictions[i] = int(action[count_key])
+        
         self.action_history.append(action_record)
         
         # Execute action on the grid (this sets self.last_action_valid)
-        self._execute_action(action)
+        self._execute_action(action, count_predictions)
         self.step_count += 1
         
         # Check if this was a new useful color selection
@@ -433,6 +463,8 @@ class ARC(embodied.Env):
         # PHASE SYSTEM: Reset to SETUP phase
         self.phase = 'SETUP'
         self.paints_in_current_phase = 0
+        self.expected_paint_count = 0
+        self.remaining_paint_count = 0
         
         # Count how many of each color appear in the target grid
         self.target_color_counts = {}
@@ -472,17 +504,23 @@ class ARC(embodied.Env):
         
         return obs
     
-    def _execute_action(self, action):
+    def _execute_action(self, action, count_predictions=None):
         """
         Modify the current_output grid based on action.
         
         PHASE SYSTEM:
         - SETUP phase: Only resize action is valid. After resize → COLOR_SELECT phase.
         - COLOR_SELECT phase: Only set_color or done actions are valid. After set_color → PAINT phase.
-        - PAINT phase: Only paint or done actions are valid. Agent must paint with current color.
-          Agent MUST paint at least once before 'done' action is allowed.
-          When agent takes 'done' action (after painting) → COLOR_SELECT phase.
+        - PAINT phase: Only paint action is valid. Agent must paint with current color.
+          When remaining_paint_count reaches 0 → automatically transition to COLOR_SELECT.
+        
+        Args:
+            action: Action dict containing action_type, x, y, color, width, height
+            count_predictions: Dict mapping color_idx -> predicted count for that color
         """
+        if count_predictions is None:
+            count_predictions = {}
+        
         # Convert all action values to Python integers at the start
         action_type = int(action['action_type'])
         x = int(action['x'])
@@ -535,6 +573,15 @@ class ARC(embodied.Env):
                 self.selected_colors.add(new_color)
                 self.has_selected_color = True
                 
+                # Set expected paint count from count prediction head
+                if new_color in count_predictions:
+                    self.expected_paint_count = count_predictions[new_color]
+                    self.remaining_paint_count = count_predictions[new_color]
+                else:
+                    # Default to 1 if no prediction available
+                    self.expected_paint_count = 1
+                    self.remaining_paint_count = 1
+                
                 # TRANSITION: COLOR_SELECT → PAINT
                 self.phase = 'PAINT'
                 self.paints_in_current_phase = 0  # Reset paint counter
@@ -555,7 +602,7 @@ class ARC(embodied.Env):
                 return
         
         elif self.phase == 'PAINT':
-            # In PAINT phase: paint OR done actions are allowed
+            # In PAINT phase: only paint action is allowed
             if action_type == 0:  # Paint action
                 # Check if position is out of bounds
                 h, w = self.current_output.shape
@@ -590,25 +637,16 @@ class ARC(embodied.Env):
                 self.painted_positions.add((x, y))
                 self.paints_in_current_phase += 1
                 
-                # Check if we should auto-transition back to COLOR_SELECT
-                # Option 1: Check if no more valid positions to paint (any color)
-                h, w = self.current_output.shape
-                has_valid_positions = False
-                for yy in range(h):
-                    for xx in range(w):
-                        if (xx, yy) not in self.painted_positions:
-                            has_valid_positions = True
-                            break
-                    if has_valid_positions:
-                        break
+                # Decrement remaining paint count
+                self.remaining_paint_count -= 1
                 
-                if not has_valid_positions:
-                    # No more positions to paint anywhere - stay in PAINT phase, 
-                    # agent must use 'done' action to end episode
-                    pass
+                # AUTO-TRANSITION: When remaining count reaches 0, return to COLOR_SELECT
+                if self.remaining_paint_count <= 0:
+                    self.phase = 'COLOR_SELECT'
             
-            elif action_type == 2:  # Done action - explicit exit from painting
-                # Must paint at least once before transitioning back to COLOR_SELECT
+            elif action_type == 2:  # Done action - no longer needed, but handle gracefully
+                # Allow done action to also transition back to COLOR_SELECT
+                # This provides backward compatibility if needed
                 if self.paints_in_current_phase == 0:
                     self.last_action_valid = False
                     self.invalid_action_count += 1
@@ -617,8 +655,7 @@ class ARC(embodied.Env):
                     self.invalid_action_types['done_before_painting'] += 1
                     return
                 
-                # TRANSITION: PAINT → COLOR_SELECT (or end episode if done with all)
-                # For now, allow re-entering color select to change colors
+                # TRANSITION: PAINT → COLOR_SELECT
                 self.phase = 'COLOR_SELECT'
             
             else:
@@ -883,12 +920,13 @@ class ARC(embodied.Env):
             ], dtype=np.int32)
         
         elif self.phase == 'PAINT':
-            # In PAINT: paint (if positions available) and done are valid
-            # Done transitions back to COLOR_SELECT only after painting at least once
+            # In PAINT: only paint action is valid
+            # Auto-transitions to COLOR_SELECT when remaining_paint_count reaches 0
+            # Done action is still allowed for backward compatibility
             obs['valid_actions'] = np.array([
-                1 if has_any_valid_positions == 1 else 0,  # [0] paint
+                1 if has_any_valid_positions == 1 else 0,  # [0] paint (valid if positions available)
                 0,  # [1] resize (not allowed in PAINT phase)
-                1 if self.paints_in_current_phase > 0 else 0,  # [2] done (only after painting at least once)
+                1 if self.paints_in_current_phase > 0 else 0,  # [2] done (optional, for backward compatibility)
                 0,  # [3] set_color (not allowed in PAINT phase)
             ], dtype=np.int32)
         
@@ -903,6 +941,10 @@ class ARC(embodied.Env):
         
         # Add current color to observation
         obs['current_color'] = np.int32(self.current_color)
+        
+        # Add remaining paint count to observation
+        # This tells the agent how many more times it needs to paint with the current color
+        obs['remaining_paint_count'] = np.int32(self.remaining_paint_count)
         
         # Color mask: disable black (color 0), enable all others (1-9)
         obs['valid_colors'] = np.array([0, 1, 1, 1, 1, 1, 1, 1, 1, 1], dtype=np.int32)
