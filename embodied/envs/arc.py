@@ -302,16 +302,16 @@ class ARC(embodied.Env):
             'width': elements.Space(np.int32, (), 0, 30),   # Target width for resize (0-29 output, maps to 1-30 actual)
             'height': elements.Space(np.int32, (), 0, 30),  # Target height for resize (0-29 output, maps to 1-30 actual)
             # Count predictions for each color (0-30) - used to determine how many times to paint each color
-            'count_0': elements.Space(np.int32, (), 0, 31),  # Black count
-            'count_1': elements.Space(np.int32, (), 0, 31),  # Blue count
-            'count_2': elements.Space(np.int32, (), 0, 31),  # Red count
-            'count_3': elements.Space(np.int32, (), 0, 31),  # Green count
-            'count_4': elements.Space(np.int32, (), 0, 31),  # Yellow count
-            'count_5': elements.Space(np.int32, (), 0, 31),  # Gray count
-            'count_6': elements.Space(np.int32, (), 0, 31),  # Magenta count
-            'count_7': elements.Space(np.int32, (), 0, 31),  # Orange count
-            'count_8': elements.Space(np.int32, (), 0, 31),  # Light Blue count
-            'count_9': elements.Space(np.int32, (), 0, 31),  # Maroon count
+            'count_0': elements.Space(np.int32, (), 0, 5),  # Black count
+            'count_1': elements.Space(np.int32, (), 0, 5),  # Blue count
+            'count_2': elements.Space(np.int32, (), 0, 5),  # Red count
+            'count_3': elements.Space(np.int32, (), 0, 5),  # Green count
+            'count_4': elements.Space(np.int32, (), 0, 5),  # Yellow count
+            'count_5': elements.Space(np.int32, (), 0, 5),  # Gray count
+            'count_6': elements.Space(np.int32, (), 0, 5),  # Magenta count
+            'count_7': elements.Space(np.int32, (), 0, 5),  # Orange count
+            'count_8': elements.Space(np.int32, (), 0, 5),  # Light Blue count
+            'count_9': elements.Space(np.int32, (), 0, 5),  # Maroon count
             'reset': elements.Space(bool),
         }
     
