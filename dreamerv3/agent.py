@@ -73,6 +73,71 @@ def compute_color_target(target_pair):
     return target_dist
 
 
+def compute_color_count_target(target_pair, test_grid_height, test_grid_width):
+    """
+    Extract how many pixels of each color appear in the target output.
+    
+    Args:
+        target_pair: (B, T, H, W*2, 3) RGB image where right half is the target output
+        test_grid_height: (B, T) actual grid height (1-30)
+        test_grid_width: (B, T) actual grid width (1-30)
+    
+    Returns:
+        color_counts: (B, T, 10) - count of each color (0-9), normalized to [0, 30]
+    """
+    # Extract right half (target output)
+    B, T, H, W2, C = target_pair.shape
+    W = W2 // 2
+    target_output = target_pair[:, :, :, W:, :]  # (B, T, H, W, 3)
+    
+    # Define ARC color palette as array
+    color_palette = jnp.array([
+        [0, 0, 0],           # 0: Black
+        [0, 116, 217],       # 1: Blue
+        [255, 65, 54],       # 2: Red
+        [46, 204, 64],       # 3: Green
+        [255, 220, 0],       # 4: Yellow
+        [170, 170, 170],     # 5: Gray
+        [240, 18, 190],      # 6: Magenta
+        [255, 133, 27],      # 7: Orange
+        [127, 219, 255],     # 8: Light Blue
+        [135, 12, 37],       # 9: Maroon
+    ], dtype=jnp.float32)
+    
+    # Extract the valid grid region (first test_grid_height x test_grid_width pixels)
+    grid_colors = target_output[:, :, :30, :30, :]  # (B, T, 30, 30, 3)
+    
+    # Create valid region mask based on grid dimensions
+    y_coords = jnp.arange(30)[None, None, :, None]  # (1, 1, 30, 1)
+    x_coords = jnp.arange(30)[None, None, None, :]  # (1, 1, 1, 30)
+    height = test_grid_height[:, :, None, None]  # (B, T, 1, 1)
+    width = test_grid_width[:, :, None, None]     # (B, T, 1, 1)
+    valid_mask = ((y_coords < height) & (x_coords < width)).astype(jnp.float32)  # (B, T, 30, 30)
+    
+    # Compute distance to each color for each pixel in the valid region
+    # grid_colors: (B, T, 30, 30, 3), color_palette: (10, 3)
+    # Compute L2 distance: (B, T, 30, 30, 3) vs (10, 3) -> (B, T, 30, 30, 10)
+    distances = jnp.sum(
+        (grid_colors[:, :, :, :, None, :] - color_palette[None, None, None, None, :, :]) ** 2, 
+        axis=-1
+    )  # (B, T, 30, 30, 10)
+    color_indices = jnp.argmin(distances, axis=-1)  # (B, T, 30, 30) - best matching color for each pixel
+    
+    # Count occurrences of each color in the valid region
+    color_counts = jnp.zeros((B, T, 10), dtype=jnp.float32)
+    for color_idx in range(10):
+        # Count pixels where this color appears AND the pixel is in valid region
+        is_color = (color_indices == color_idx).astype(jnp.float32)  # (B, T, 30, 30)
+        count = (is_color * valid_mask).sum(axis=(2, 3))  # (B, T)
+        color_counts = color_counts.at[:, :, color_idx].set(count)
+    
+    # Clip counts to [0, 30] range for categorical prediction
+    # (most ARC grids are smaller, and this gives reasonable discretization)
+    color_counts = jnp.clip(color_counts, 0, 30)
+    
+    return color_counts
+
+
 def compute_position_targets(target_pair, test_grid_height, test_grid_width):
     """
     Extract which positions need to be painted in the target.
@@ -337,6 +402,17 @@ class Agent(embodied.jax.Agent):
         'width': elements.Space(np.int32, (), 0, 30),
         'height': elements.Space(np.int32, (), 0, 30),
         'color': elements.Space(np.int32, (), 0, 10),
+        # Color count heads: one per color, predicting count in range [0, 30]
+        'count_0': elements.Space(np.int32, (), 0, 31),  # Black count
+        'count_1': elements.Space(np.int32, (), 0, 31),  # Blue count
+        'count_2': elements.Space(np.int32, (), 0, 31),  # Red count
+        'count_3': elements.Space(np.int32, (), 0, 31),  # Green count
+        'count_4': elements.Space(np.int32, (), 0, 31),  # Yellow count
+        'count_5': elements.Space(np.int32, (), 0, 31),  # Gray count
+        'count_6': elements.Space(np.int32, (), 0, 31),  # Magenta count
+        'count_7': elements.Space(np.int32, (), 0, 31),  # Orange count
+        'count_8': elements.Space(np.int32, (), 0, 31),  # Light Blue count
+        'count_9': elements.Space(np.int32, (), 0, 31),  # Maroon count
     }
     sel_outs = {k: d1 for k in sel_spaces.keys()}  # categorical for all
     self.sel = embodied.jax.MLPHead(sel_spaces, sel_outs, **config.policy, name='sel')
@@ -368,6 +444,10 @@ class Agent(embodied.jax.Agent):
       scales['sel_color'] = 1.0
     if 'sel_position' not in scales:
       scales['sel_position'] = 1.0
+    # Add scales for color count heads
+    for i in range(10):
+      if f'sel_count_{i}' not in scales:
+        scales[f'sel_count_{i}'] = 1.0
     self.scales = scales
 
   @property
@@ -413,7 +493,10 @@ class Agent(embodied.jax.Agent):
     policy = self.pol(self.feat2tensor(feat), bdims=1)
     # Merge in selection heads derived from features
     sel = self.sel(self.feat2tensor(feat), bdims=1)
-    policy.update(sel)
+    # Only merge action-relevant heads (position, width, height, color)
+    # Count heads are auxiliary predictions, not actions
+    action_heads = {k: v for k, v in sel.items() if not k.startswith('count_')}
+    policy.update(action_heads)
 
     # Apply action_type mask if provided
     if 'valid_actions' in obs and 'action_type' in policy:
@@ -472,6 +555,10 @@ class Agent(embodied.jax.Agent):
       # Convert flat index to (y, x) coordinates: position = y * 30 + x
       act['y'] = position_idx // 30  # row
       act['x'] = position_idx % 30   # column
+    
+    # Remove count predictions from actions - they're only for supervised learning, not environment actions
+    for i in range(10):
+      act.pop(f'count_{i}', None)
     
     out = {}
     out['finite'] = elements.tree.flatdict(jax.tree.map(
@@ -545,6 +632,11 @@ class Agent(embodied.jax.Agent):
     if 'target_pair' in obs:
       # Extract target distributions from ground truth
       color_target = compute_color_target(obs['target_pair'])  # (B, T, 10)
+      color_counts_target = compute_color_count_target(
+          obs['target_pair'], 
+          obs['test_grid_height'], 
+          obs['test_grid_width']
+      )  # (B, T, 10) - counts for each color
       
       # Get predicted distributions (logits)
       color_logits = sel_pred['color'].dist.logits if hasattr(sel_pred['color'], 'dist') else sel_pred['color'].logits
@@ -557,6 +649,20 @@ class Agent(embodied.jax.Agent):
       # Supervise color distribution (unconditional)
       eps = 1e-8
       losses['sel_color'] = -(color_target * jnp.log(color_probs + eps)).sum(axis=-1)
+      
+      # Supervise color count heads
+      # For each color, predict its count as a categorical distribution over [0, 30]
+      for color_idx in range(10):
+        count_key = f'count_{color_idx}'
+        # Target count for this color (clipped to [0, 30])
+        target_count = color_counts_target[:, :, color_idx].astype(jnp.int32)  # (B, T)
+        target_count = jnp.clip(target_count, 0, 30)  # Ensure in valid range
+        
+        # Predicted distribution for this color's count
+        count_dist = sel_pred[count_key]
+        
+        # Cross-entropy loss
+        losses[f'sel_{count_key}'] = count_dist.loss(target_count)
       
       # NEW: Color-conditional position supervision using joint heatmap
       # Compute position heatmap targets for each color (10 colors)
@@ -598,7 +704,9 @@ class Agent(embodied.jax.Agent):
       inp = self.feat2tensor(feat)
       base = self.pol(inp, 1)
       selp = self.sel(inp, 1)
-      merged = {**base, **selp}
+      # Only merge action-relevant heads, not count predictions
+      action_selp = {k: v for k, v in selp.items() if not k.startswith('count_')}
+      merged = {**base, **action_selp}
       return sample(merged)
     _, imgfeat, imgprevact = self.dyn.imagine(starts, policyfn, H, training)
     first = jax.tree.map(
@@ -613,7 +721,9 @@ class Agent(embodied.jax.Agent):
     # Use merged policy (base + selection heads) for imagination loss
     base_pol = self.pol(inp, 2)
     sel_pol = self.sel(inp, 2)
-    merged_pol = {**base_pol, **sel_pol}
+    # Only merge action-relevant heads, not count predictions
+    action_sel_pol = {k: v for k, v in sel_pol.items() if not k.startswith('count_')}
+    merged_pol = {**base_pol, **action_sel_pol}
     los, imgloss_out, mets = imag_loss(
         imgact,
         self.rew(inp, 2).pred(),
@@ -842,6 +952,9 @@ def imag_loss(
       m = resize_mask
     elif k == 'color':
       m = color_mask
+    elif k.startswith('count_'):
+      # Count heads are supervised only, not real actions - exclude from policy loss
+      continue
     else:
       # Always include other heads (e.g., action_type, reset)
       m = jnp.ones_like(lp, dtype=bool)
@@ -883,6 +996,9 @@ def imag_loss(
       m = resize_mask
     elif k == 'color':
       m = color_mask
+    elif k.startswith('count_'):
+      # Count heads are supervised only, skip entropy metrics
+      continue
     else:
       m = jnp.ones_like(ent, dtype=bool)
     m = m.astype(ent.dtype)
