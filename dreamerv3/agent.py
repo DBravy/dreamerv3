@@ -541,6 +541,41 @@ class Agent(embodied.jax.Agent):
     policy = self.pol(self.feat2tensor(feat), bdims=1)
     # Merge in selection heads derived from features
     sel = self.sel(self.feat2tensor(feat), bdims=1)
+    
+    # COMBINED APPROACH - INFERENCE COMPONENT:
+    # Gate count predictions based on binary color head predictions
+    # Only predict non-zero counts for colors that the binary head says are present
+    if 'color' in sel:
+      # Get binary color presence predictions
+      color_dist = sel['color']
+      color_logits = color_dist.dist.logits if hasattr(color_dist, 'dist') else color_dist.logits
+      color_probs = jax.nn.softmax(color_logits)  # (B, 10) - probability each color is present
+      
+      # Threshold to determine which colors are predicted as present
+      # Using 0.1 threshold: colors with >10% probability are considered "present"
+      color_present = (color_probs > 0.1).astype(jnp.float32)  # (B, 10)
+      
+      # For each count head, bias toward count=0 when color is predicted as absent
+      for color_idx in range(10):
+        count_key = f'count_{color_idx}'
+        if count_key in sel:
+          count_dist = sel[count_key]
+          count_logits = count_dist.dist.logits if hasattr(count_dist, 'dist') else count_dist.logits
+          
+          # Create bias vector that strongly favors count=0 for absent colors
+          # [10.0, 0, 0, 0, 0] means: heavily bias toward predicting count=0
+          zero_bias = jnp.array([10.0, 0.0, 0.0, 0.0, 0.0])  # (5,)
+          
+          # Apply gating: use normal logits if color present, bias toward 0 if absent
+          present = color_present[:, color_idx:color_idx+1]  # (B, 1)
+          masked_logits = count_logits * present + zero_bias[None, :] * (1 - present)
+          
+          # Update the distribution with masked logits
+          if hasattr(count_dist, 'dist'):
+            sel[count_key].dist.logits = masked_logits
+          else:
+            sel[count_key].logits = masked_logits
+    
     # Only merge action-relevant heads (position, width, height, color)
     # Count heads are auxiliary predictions, not actions
     action_heads = {k: v for k, v in sel.items() if not k.startswith('count_')}
@@ -702,6 +737,7 @@ class Agent(embodied.jax.Agent):
       
       # Supervise color count heads
       # For each color, predict its count as a categorical distribution over [0, 4]
+      # MASKED by whether the color actually appears in the target (binary color head)
       for color_idx in range(10):
         count_key = f'count_{color_idx}'
         # Target count for this color (clipped to [0, 4])
@@ -713,7 +749,13 @@ class Agent(embodied.jax.Agent):
         
         # Ordinal loss: penalizes predictions proportionally to distance from target
         # This makes the model learn that 4 is closer to 5 than 0 is to 5
-        losses[f'sel_{count_key}'] = ordinal_loss(count_dist, target_count, num_classes=5)
+        count_loss = ordinal_loss(count_dist, target_count, num_classes=5)
+        
+        # COMBINED APPROACH - TRAINING COMPONENT:
+        # Mask loss by whether color is actually present in ground truth
+        # This encourages count heads to only activate when their color appears
+        color_present_gt = (color_target[:, :, color_idx] > 0).astype(jnp.float32)  # (B, T)
+        losses[f'sel_{count_key}'] = count_loss * color_present_gt
       
       # NEW: Color-conditional position supervision using joint heatmap
       # Compute position heatmap targets for each color (10 colors)
