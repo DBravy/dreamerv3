@@ -73,6 +73,54 @@ def compute_color_target(target_pair):
     return target_dist
 
 
+def ordinal_loss(predicted_dist, target_class, num_classes):
+    """
+    Compute ordinal loss that penalizes predictions proportionally to distance from target.
+    
+    This loss encourages the model to learn that classes are ordered (e.g., predicting 4 
+    when target is 5 is better than predicting 0 when target is 5).
+    
+    Loss = sum_i P(class_i) * |i - target|
+    
+    Args:
+        predicted_dist: Distribution object with logits or probs
+        target_class: (B, T) integer target class indices
+        num_classes: int, number of classes (e.g., 5 for counts 0-4)
+    
+    Returns:
+        loss: (B, T) scalar loss per sample
+    """
+    # Get predicted probabilities
+    if hasattr(predicted_dist, 'probs_parameter'):
+        # TensorFlow Probability style
+        probs = predicted_dist.probs_parameter()
+    elif hasattr(predicted_dist, 'probs'):
+        probs = predicted_dist.probs
+    elif hasattr(predicted_dist, 'dist'):
+        # Nested distribution
+        if hasattr(predicted_dist.dist, 'probs_parameter'):
+            probs = predicted_dist.dist.probs_parameter()
+        elif hasattr(predicted_dist.dist, 'logits'):
+            probs = jax.nn.softmax(predicted_dist.dist.logits)
+        else:
+            probs = predicted_dist.dist.probs
+    elif hasattr(predicted_dist, 'logits'):
+        probs = jax.nn.softmax(predicted_dist.logits)
+    else:
+        raise ValueError(f"Cannot extract probabilities from distribution: {type(predicted_dist)}")
+    
+    # Create distance matrix: |i - target| for each class i
+    # Shape: (B, T, num_classes)
+    class_indices = jnp.arange(num_classes, dtype=jnp.float32)[None, None, :]  # (1, 1, num_classes)
+    target_expanded = target_class[:, :, None].astype(jnp.float32)  # (B, T, 1)
+    distances = jnp.abs(class_indices - target_expanded)  # (B, T, num_classes)
+    
+    # Compute weighted sum: sum_i P(i) * |i - target|
+    ordinal_loss_value = (probs * distances).sum(axis=-1)  # (B, T)
+    
+    return ordinal_loss_value
+
+
 def compute_color_count_target(target_pair, test_grid_height, test_grid_width):
     """
     Extract how many pixels of each color appear in the target output.
@@ -663,8 +711,9 @@ class Agent(embodied.jax.Agent):
         # Predicted distribution for this color's count
         count_dist = sel_pred[count_key]
         
-        # Cross-entropy loss
-        losses[f'sel_{count_key}'] = count_dist.loss(target_count)
+        # Ordinal loss: penalizes predictions proportionally to distance from target
+        # This makes the model learn that 4 is closer to 5 than 0 is to 5
+        losses[f'sel_{count_key}'] = ordinal_loss(count_dist, target_count, num_classes=5)
       
       # NEW: Color-conditional position supervision using joint heatmap
       # Compute position heatmap targets for each color (10 colors)
