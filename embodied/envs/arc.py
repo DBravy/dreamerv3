@@ -957,8 +957,13 @@ class ARC(embodied.Env):
         # Clamp to 0 to ensure it's always non-negative (can temporarily go negative during transitions)
         obs['remaining_paint_count'] = np.int32(max(0, self.remaining_paint_count))
         
-        # Color mask: disable black (color 0), enable all others (1-9)
-        obs['valid_colors'] = np.array([0, 1, 1, 1, 1, 1, 1, 1, 1, 1], dtype=np.int32)
+        # Color mask: disable black (color 0) and any colors already selected in this episode
+        valid_colors = np.ones(10, dtype=np.int32)
+        valid_colors[0] = 0  # never allow black
+        for c in self.selected_colors:
+            if 0 <= c < 10:
+                valid_colors[c] = 0
+        obs['valid_colors'] = valid_colors.astype(np.int32)
         
         return obs
     
