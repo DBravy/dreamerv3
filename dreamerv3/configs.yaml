@@ -180,7 +180,7 @@ crafter:
   run: {steps: 1.1e6, envs: 1, train_ratio: 512}
 
 arc:
-  <<: *size12m  # Use 1M param model to prevent OOM
+  <<: *size25m  # Use 1M param model to prevent OOM
   task: arc_training
   env:
     arc: {puzzle_dir: './arc-data/', version: 'V2', split: 'training', length: 100, size: 64, max_puzzles: 0, repeat_single: False, puzzle_index: -1, min_target_width: 0, max_target_width: 0, min_target_height: 0, max_target_height: 0}
@@ -190,7 +190,7 @@ arc:
     enc.simple: {mults: [2, 3, 4, 4]}  # Keep 4 layers since we're padding to 64
 
 arc_v1_train:
-  <<: *size12m  # Use 1M param model to prevent OOM
+  <<: *size25m  # Use 1M param model to prevent OOM
   task: arc_training
   env:
     arc: {puzzle_dir: './arc-data/', version: 'V1', split: 'training', length: 100, size: 64, max_puzzles: 0, repeat_single: False, puzzle_index: -1, min_target_width: 0, max_target_width: 0, min_target_height: 0, max_target_height: 0}
@@ -200,7 +200,7 @@ arc_v1_train:
     enc.simple: {mults: [2, 3, 4, 4]}
 
 arc_v1_eval:
-  <<: *size12m  # Use 1M param model to prevent OOM
+  <<: *size25m  # Use 1M param model to prevent OOM
   task: arc_training
   env:
     arc: {puzzle_dir: './arc-data/', version: 'V1', split: 'evaluation', length: 100, size: 64, max_puzzles: 0, repeat_single: False, puzzle_index: -1, min_target_width: 0, max_target_width: 0, min_target_height: 0, max_target_height: 0}
@@ -210,7 +210,7 @@ arc_v1_eval:
     enc.simple: {mults: [2, 3, 4, 4]}
 
 arc_v2_train:
-  <<: *size12m  # Use 1M param model to prevent OOM
+  <<: *size25m  # Use 1M param model to prevent OOM
   task: arc_training
   env:
     arc: {puzzle_dir: './arc-data/', version: 'V2', split: 'training', length: 100, size: 64, max_puzzles: 0, repeat_single: False, puzzle_index: -1, min_target_width: 0, max_target_width: 0, min_target_height: 0, max_target_height: 0}
@@ -220,7 +220,7 @@ arc_v2_train:
     enc.simple: {mults: [2, 3, 4, 4]}
 
 arc_v2_eval:
-  <<: *size12m  # Use 1M param model to prevent OOM
+  <<: *size25m  # Use 1M param model to prevent OOM
   task: arc_training
   env:
     arc: {puzzle_dir: './arc-data/', version: 'V2', split: 'evaluation', length: 100, size: 64, max_puzzles: 0, repeat_single: False, puzzle_index: -1, min_target_width: 0, max_target_width: 0, min_target_height: 0, max_target_height: 0}
